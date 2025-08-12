@@ -1,0 +1,19 @@
+Expected to have three files:
+- Nodes data [Volume of each region...]
+- Edges data [Wasserstein distance...]
+- Global data [BMI, ... etc]
+
+# Scikit-learn version: 1.0.1
+# Scipy: 1.7.0
+# Pandas version: 1.3.4
+# Numpy version: 1.21.4
+# Torch version: 1.10.0
+# DGL version: 0.7.2
+# Pickle version:
+
+# Torch-geometric: 2.0.2
+# Torch-sparse: 0.6.12
+# Torch-scatter: 2.0.9
+# Torchvision: 0.11.1
+
+

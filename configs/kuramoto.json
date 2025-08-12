@@ -1,0 +1,67 @@
+{
+    "slurm": {
+      "job_name": "optuna_kuramoto",
+      "output": "/cluster/home/ja1659/logs/optuna_kuramoto_%j.out",
+      "error": "/cluster/home/ja1659/logs/optuna_kuramoto_%j.err",
+      "ntasks": 1,
+      "cpus_per_task": 16,
+      "memory": "32G",
+      "time_limit": "24:00:00"
+    },
+    "paths": {
+      "code_path": "/cluster/home/ja1659/Code/stmgcn",
+      "data_path": "/data/bdip2/jbanusco/Data/Multiplex_Synthetic_FINAL",
+      "singularity_image": "/data/bdip2/jbanusco/SingularityImages/multiplex-cpu_0.0.sif",
+      "project_path": "/usr/src",
+      "data_folder": "/usr/data"
+    },
+    "experiment": {
+      "save_folder": "/usr/data",
+      "name": "KuramotoOscillator",
+      "experiment_name": "Multiplex_Kuramoto_DIMENSIONS_NEW_LOSS",
+      "reprocess": false,
+      "reload_model": false      
+    },
+    "simulation": {
+      "num_samples": 500,
+      "num_nodes": 10,
+      "k": 0.33,
+      "space_coupling": 1,
+      "time_coupling": 1,
+      "dt": 0.1,
+      "duration": 10,
+      "spatial_graph_type": "barabasi",
+      "temporal_graph_type": "identity"
+    },
+    "model": {
+      "normalization": "ZNorm",
+      "latent_dim": 10,
+      "hidden_dim": 20,
+      "space_planes": 3,
+      "time_planes": 3,
+      "use_norm": true,
+      "use_diffusion": false,
+      "use_einsum": false,
+      "agg_type": "score",
+      "use_attention": false,
+      "compute_derivative": true,
+      "use_norm_stmgcn": true,
+      "use_bias_stmgcn": false,
+      "decode_just_latent": true
+    },
+    "optimization": {
+      "batch_size": 30,
+      "num_epochs": 300,
+      "init_lr": 0.01,
+      "weight_decay": 0.01,
+      "gamma_rec": 1.0,
+      "gamma_class": 0.0,
+      "gamma_bc": 0.0,
+      "gamma_lat": 0.05,
+      "gamma_graph": 0.0
+    },
+    "optuna": {
+      "num_trials": 100
+    }    
+  }
+  
