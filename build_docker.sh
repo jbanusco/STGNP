@@ -8,7 +8,7 @@ fi
 
 # Docker image name & version
 IMAGE_NAME="multiplex"
-VERSION="0.0"
+VERSION="0.1"
 
 # Local Docker registry
 LOCAL_REGISTRY="localhost:5000"

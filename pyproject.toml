@@ -1,0 +1,83 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "multiplex-cardiac"
+version = "0.1.0"
+description = "Spatio-temporal multiplex GNN + Neural ODEs for cardiac trajectory modeling."
+authors = [
+  { name = "Jaume Banus", email = "jaume.banus-cobo@chuv.ch" }
+]
+requires-python = ">=3.10"
+dependencies = [
+  "pyarrow==17.0",
+  "joblib==1.4.2",
+  "scikit-learn==1.5.1",
+  "xgboost==2.1",
+  "torchdiffeq==0.2.4",
+  "optuna==3.6.1",
+  "wandb==0.17.5",
+  "pandas==2.2.2",
+  "numpy==2.0.1",
+  "matplotlib==3.9.1",
+  "seaborn==0.13.2",
+  "scipy==1.14.0",
+  "PyYAML==6.0.1",
+  "pydantic==2.8.2",
+  "torch_geometric==2.5.3",
+  "torchmetrics==1.4.0",
+  "six==1.16.0",
+  "trimap==1.1.4",
+  "umap-learn==0.5.7",
+  "pacmap==0.7.6",
+  "openTSNE==1.0.2",
+  "tensorboard==2.19.0",
+  "psycopg2-binary==2.9.10",
+  "ipython==9.0.2",
+  "imageio==2.37.0",
+  # CPU-safe PyTorch & DGL
+  "torch==2.4.1; extra != 'gpu'",
+  "torchvision==0.19.1; extra != 'gpu'",
+  "torchaudio==2.4.1; extra != 'gpu'",
+  "dgl>=2.4; extra != 'gpu'"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==8.3.5",
+  "pytest-cov==5.0.0",
+  "ruff==0.11.13",
+  "black==24.8.0",
+  "bandit==1.7.10",
+  "safety==3.5.2"
+]
+gpu = [
+  # CUDA 12.1 wheels for PyTorch & DGL
+  "torch==2.4.1 --index-url https://download.pytorch.org/whl/cu121",
+  "torchvision==0.19.1 --index-url https://download.pytorch.org/whl/cu121",
+  "torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cu121",
+  "dgl -f https://data.dgl.ai/wheels/torch-2.4/cu121/repo.html"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+exclude = ["tests*", "docs*", "examples*"]
+
+[tool.black]
+target-version = ["py310", "py311", "py312"]
+line-length = 88
+
+[tool.ruff]
+target-version = "py310"
+line-length = 88
+indent-width = 4
+
+[tool.ruff.lint]
+extend-select = [
+  "UP", "D", "E", "W", "I", "PL", "F", "PYI", "TID", "G", "SIM",
+  "TCH", "ARG", "A", "B", "COM", "C4", "ASYNC", "C90"
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"

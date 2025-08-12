@@ -17,3 +17,6 @@ Expected to have three files:
 # Torchvision: 0.11.1
 
 
+Default → pip install . will install CPU-safe PyTorch + DGL.
+
+GPU → pip install .[gpu] will install CUDA 12.1 PyTorch/DGL wheels.

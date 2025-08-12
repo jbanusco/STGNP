@@ -1,79 +1,45 @@
-# Pull official base image
-# FROM python:3.9-slim
-# FROM nvidia/cuda:11.3.1-runtime-ubuntu20.04
-# FROM nvidia/cuda:11.3.1-cudnn8-runtime-ubuntu20.04
-FROM nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu20.04
+# GPU-enabled base image with CUDA 12.1 and cuDNN 8
+FROM nvidia/cuda:12.1.105-cudnn8-runtime-ubuntu20.04
 
-# Maintainer
 LABEL maintainer="Jaume Banus <jaume.banus-cobo@chuv.ch>"
 
-# Set environment variables to avoid prompts during package installation
-ENV DEBIAN_FRONTEND=noninteractive
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    DGLBACKEND=pytorch
 
-# Install necessary dependencies and Python 3.12 from deadsnakes PPA
+# Install Python 3.12 from deadsnakes PPA
 RUN apt-get update && apt-get install -y --no-install-recommends \
     software-properties-common \
     && add-apt-repository ppa:deadsnakes/ppa \
     && apt-get update && apt-get install -y --no-install-recommends \
-    python3.12 \
-    python3.12-dev \
-    python3.12-venv \
-    wget \
-    git \
-    curl \
-    ca-certificates \
+    python3.12 python3.12-dev python3.12-venv \
+    wget git curl ca-certificates g++ procps vim \
     && rm -rf /var/lib/apt/lists/*
 
 # Update alternatives to point to Python 3.12
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
 
 # Install pip for Python 3.12
-RUN curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py \
-    && python3 get-pip.py \
-    && rm get-pip.py
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3
 
 # Upgrade pip
-RUN pip3 install --upgrade pip
-
-# Install PyTorch with CUDA support
-# RUN pip3 install torch==1.12.1+cu113 -f https://download.pytorch.org/whl/torch_stable.html
-
-# Install DGL with CUDA support
-# RUN pip3 install dgl-cu113 -f https://data.dgl.ai/wheels/repo.html
-# RUN pip3 install dgl -f https://data.dgl.ai/wheels/torch-1.12/cu113/repo.html
-
-# Install the ps package
-RUN apt-get update && apt-get install -y procps g++ && apt-get clean 
-
-# Install vim for debugging
-RUN apt-get update && apt-get install -y vim && apt-get clean
-
-# Set work directory
-WORKDIR /usr/src/
-
-# Set environment variables
-# Prevent python to write pyc files
-ENV PYTHONDONTWRITEBYTECODE=1
-# Prevent stderr and stdout output
-ENV PYTHONUNBUFFERED=1 
-
-# Install dependencies
-RUN pip install  dgl -f https://data.dgl.ai/wheels/torch-2.4/repo.html
-RUN pip install torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1
-
 RUN pip install --upgrade pip
-COPY ./requirements.txt /usr/src/requirements.txt
-RUN pip install -r requirements.txt
-# RUN pip install  dgl -f https://data.dgl.ai/wheels/torch-2.4/repo.html
 
-# Update the requests
+# # Install GPU-specific PyTorch + DGL
+# RUN pip install torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 \
+#     --index-url https://download.pytorch.org/whl/cu121 \
+#     && pip install dgl -f https://data.dgl.ai/wheels/torch-2.4/cu121/repo.html
+
+# Copy pyproject.toml and install dependencies
+WORKDIR /usr/src
+COPY pyproject.toml ./
+COPY . ./
+
+# Install project with GPU extra
+RUN pip install .
+
+# Upgrade requests (if needed)
 RUN pip install --upgrade requests
 
-# Set DGL backend to pytorch
-ENV DGLBACKEND='pytorch'
-
-# Copy project
-COPY . /usr/src/
-
-# Entrypoint
-CMD [" "]
+CMD ["/bin/bash"]
