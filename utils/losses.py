@@ -26,9 +26,9 @@ class LossODEProcess(nn.Module):
         self.loss_rec_fn = nn.HuberLoss(reduction='none', delta=0.1)
         # self.loss_rec_fn = nn.L1Loss(reduction='none')
     
-    def forward(self, p_y_pred, y_target, pred_labels, tgt_labels, q_target=None, q_context=None, latent_values=None, 
-                graph_reg=None, tgt_edges=(None, None), ctx_edges=(None, None), only_rec=False, pred_external=None, 
-                tgt_external=None, prototypes=None, warmup=False, weights=None, rampup_weight=1.0):
+    def forward(self, p_y_pred, y_target, q_target=None, q_context=None, latent_values=None, 
+                graph_reg=None, tgt_edges=(None, None), ctx_edges=(None, None), warmup=False, 
+                weights=None, rampup_weight=1.0):
         """
         Computes Neural Process loss.
 

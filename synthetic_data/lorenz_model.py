@@ -12,16 +12,15 @@ from scipy.integrate import odeint
 from synthetic_data.synthetic_dataset import SyntheticDataset
 import torchvision.transforms as transforms
 
-from model.train_stmgcn_ode import build_model_multiplex
+
 from synthetic_data.train_synthetic_models import ObjectiveSynthetic, batch_loop
-from synthetic_data.gene_evolution import generate_graph
+
 from utils.model_selection_sklearn import stratified_split
 from utils.utils import seed_everything, str2bool, get_best_params
-from experiments.ACDC_All import plot_predicted_trajectories
-from model.testing_model import save_training_convergence
-from experiments.ACDC_CV import plot_results, plot_combined_trajectories, get_data_in_original_scale
 from utils.model_selection_optuna import hypertune_optuna
-from model.testing_model import get_latex_table, wrap_latex_table
+from utils.graph_utils import generate_graph
+from model.plot_and_print_utils import get_latex_table, wrap_latex_table, save_training_convergence, plot_results, plot_combined_trajectories, get_data_in_original_scale, plot_predicted_trajectories
+
 
 
 def plot_components(xyz, t):
@@ -94,7 +93,6 @@ def generate_data(ode_system,
     # ==================== Initial states ================
     # Get the state range of the system
     data_range = np.stack(ode_system.state_range, axis=0)
-    # data_range = np.stack(ode_system.state_range, axis=0) / 2
 
     # Separate the minimum and maximum values for each dimension
     min_vals = data_range[0]
@@ -108,9 +106,6 @@ def generate_data(ode_system,
     initial_states = min_vals + random_values * (max_vals - min_vals)
 
     # ==================== Adjacency matrices ================
-    # THIS IS WHAT WILL BE PASSED TO THE MODEL
-    # Adjacency matrix for space (node-to-node interaction)
-
     # This is what is going to go to the model
     A_m = generate_graph(num_nodes, 'fully_connected', {})
     At_m = generate_graph(num_nodes, 'identity', {})
@@ -134,15 +129,13 @@ def generate_data(ode_system,
 
         # Generate H --- For the moment, this won't be passed (too much information)
         H = np.random.randn(num_nodes, num_nodes) * A
-        # Set the diagonal to zero
-        # H = H - np.diag(np.diag(H))
         H = H / np.linalg.norm(H, axis=1, keepdims=True)
         H = H * ode_system.k  # Coupling strength
+
         # Update H - this is what is going to be used to simulate the system
         ode_system.H = H
 
         xyz[i] = ode_system.simulate(length=length, dt=dt, init_state=initial_states[i])
-        # xyz_predicted[i] = ode_system.simulate(length=predicted_length, dt=dt, init_state=xyz[i, -1])
         xyz_predicted[i] = ode_system.simulate(length=predicted_length+dt*1.1, dt=dt, init_state=xyz[i, -1])[1:]
         
         # Let's see if we can generate the graphs for DGL
@@ -170,8 +163,7 @@ def generate_data(ode_system,
         # ATTENTION!: HERE IS WHERE WE NEED TO ADD THE FEATURES
         # [ Batch, Time, Nodes, Features] -> [ Batch, Nodes, Features, Time]
         hg_graph.nodes['region'].data['nfeatures'] = torch.tensor(xyz[i]).permute(1, 2, 0)
-        hg_graph.nodes['region'].data['nfeatures_predicted'] = torch.tensor(xyz_predicted[i]).permute(1, 2, 0) 
-        # hg_graph.nodes['region'].data['pos'] = []  # No positions        
+        hg_graph.nodes['region'].data['nfeatures_predicted'] = torch.tensor(xyz_predicted[i]).permute(1, 2, 0)
         hg_graph.nodes['region'].data['time'] = torch.tensor(t).unsqueeze(0).unsqueeze(1).repeat(num_nodes, 1, 1)
         hg_graph.nodes['region'].data['region_id'] = torch.tensor(region_id_data.values)
 
@@ -393,37 +385,21 @@ class LorenzDataset(SyntheticDataset):
         # Get the context points
         # ==================
         num_frames = node_data['nfeatures'].shape[-1]
-        num_context = int(0.2*num_frames)   # These are like 'control' points        
-        # Get the set of context points
-        # num_subjects = in_data.shape[0]
-        # context_pts = np.zeros((num_subjects, num_context+1), dtype=int)
-        # for s in range(0, num_subjects):
-        #     s_context_pts = np.random.choice(np.arange(1, total_points-1), num_context, replace=False)
-        #     s_context_pts = np.concatenate([np.array([0]), s_context_pts])  # Add always intial point to the context
-        #     context_pts[s, :] = s_context_pts
-
-        # context_pts = np.random.choice(np.arange(1, num_frames-1), num_context, replace=False)
-        # context_pts = np.concatenate([np.array([0]), context_pts])  # Add always intial point to the context        
         context_pts = np.arange(0, num_frames+1, 3)  # Fix context points
         target_pts = np.arange(0, num_frames)  # All of them
 
         # ==================
         # Transform the data
         # ==================
-        # or_nfeatures = node_data['nfeatures']
         nfeatures = self._transform['nfeatures'](node_data['nfeatures'].permute(2, 0, 1)).permute(1, 2, 0)        
-        nfeatures_predicted = self._transform['nfeatures'](node_data['nfeatures_predicted'].permute(2, 0, 1)).permute(1, 2, 0)
-        # pos_data = self._transform['pos'](node_data['pos'].permute(2, 0, 1)).permute(1, 2, 0)
+        nfeatures_predicted = self._transform['nfeatures'](node_data['nfeatures_predicted'].permute(2, 0, 1)).permute(1, 2, 0)        
         
         # Transform the edge data -- Don't transform the edges
         edge_space = edge_data['space']
         edge_time = edge_data['time']
-        # edge_space = self._transform['space'](edge_data['space'].permute(2, 0, 1)).permute(1, 2, 0)
-        # edge_time = self._transform['time'](edge_data['time'].permute(2, 0, 1)).permute(1, 2, 0)
 
         # Input data
         input_node_data = {'features': nfeatures,
-                           # 'pos': pos_data,
                            'time': node_data['time'],
                            'region_id': node_data['region_id'],
                            'features_predicted': nfeatures_predicted,

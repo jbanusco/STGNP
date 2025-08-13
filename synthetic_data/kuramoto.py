@@ -8,54 +8,36 @@ import pandas as pd
 import torch
 import matplotlib.pyplot as plt
 from scipy.integrate import odeint
-from scipy.sparse import diags, random
 from synthetic_data.synthetic_dataset import SyntheticDataset
 import shutil
-import networkx as nx
 import multiprocessing
 import torchvision.transforms as transforms
 
-from model.train_stmgcn_ode import build_model_multiplex
+
 from synthetic_data.train_synthetic_models import ObjectiveSynthetic, batch_loop
-from synthetic_data.gene_evolution import generate_graph
-from utils.model_selection_sklearn import stratified_split
-from experiments.ACDC_All import plot_predicted_trajectories
 from utils.utils import seed_everything, str2bool, get_best_params
-from model.testing_model import save_training_convergence
-from experiments.ACDC_CV import plot_results, plot_combined_trajectories, get_data_in_original_scale
 from utils.model_selection_optuna import hypertune_optuna
-from model.testing_model import get_latex_table, wrap_latex_table
+from utils.model_selection_sklearn import stratified_split
+from utils.graph_utils import generate_graph
+from model.plot_and_print_utils import get_latex_table, wrap_latex_table, save_training_convergence, plot_results, plot_combined_trajectories, get_data_in_original_scale, plot_predicted_trajectories
 
 
-def transform_traj(x):
-    # Unwrap the phases to remove sudden jumps
-    # trajectories_unwrapped = np.unwrap(x, axis=0)
-    # Wrap back into [0, 2π] after unwrapping
-    # trajectories_wrapped = trajectories_unwrapped % (2 * np.pi)
-
-    # trajectories_wrapped = (x - np.pi) % (2 * np.pi)
-    # trajectories_wrapped = np.sin(x % (2*np.pi))
+def transform_traj(x):    
     trajectories_wrapped = np.sin(x)
-    # trajectories_wrapped = np.unwrap(x, axis=0)
-    # trajectories_wrapped = np.sin(trajectories_wrapped)
 
     return trajectories_wrapped
 
 
 class Kuramoto:
     def __init__(self, 
-                 num_genes=10, 
-                 g=1.0, 
-                 b=0.0, 
-                 h=1.0, 
+                 num_genes=10,
                  k=1/3,
+                 g=1,
                  state_range=(0, 2*np.pi), 
                  A=None):
         self.ndim = 1
         self.num_genes = num_genes
         self.g = g  # Global coupling
-        self.b = b  # Local interaction
-        self.h = h  # External driving force
         self.k = k  # Edge coupling
         self.state_range = state_range
 
@@ -65,14 +47,7 @@ class Kuramoto:
 
         # Coupling matrix: Fully connected graph without self-loops by default
         self.A = generate_graph(self.num_genes, 'fully_connected', {})
-        self.At = generate_graph(self.num_genes, 'identity', {})
-        # self.init_state = self._init_state()
-
-    # def _init_frequencies(self, num_samples=1):
-    #     omega_min = 2 * np.pi * self.min_freq
-    #     omega_max = 2 * np.pi * self.max_freq
-    #     w = np.random.uniform(low=omega_min, high=omega_max, size=(num_samples, self.num_genes))
-    #     return w
+        self.At = generate_graph(self.num_genes, 'identity', {})        
 
     def _init_frequencies(self, num_samples=1, homogeneous=True):
         """
@@ -103,7 +78,7 @@ class Kuramoto:
         Initialize the state as a random matrix in the range state_range. Wrap the values to [0, 2*pi].
         """
         state =  np.random.uniform(self.state_range[0], self.state_range[1], size=(num_samples, self.num_genes))
-        # state = state + self.state_range[0]        
+        
         return state
 
 
@@ -137,8 +112,6 @@ class Kuramoto:
 
         # Compute the coupling term for all nodes simultaneously
         coupling = np.sum(self.A[:, :, None] * np.sin(phase_diff), axis=1)  # Shape: (num_genes, ndim)
-        # a = self.g / self.A.sum(axis=1)
-        # dx = (self.g / np.sum(self.A > 0, axis=1))[..., None] * coupling
         dx = self.g * coupling
         
         # Add the natural frequencies
@@ -165,12 +138,7 @@ class Kuramoto:
         trajectories = odeint(self.system_fn, input_state, t)
         trajectories = trajectories[:, :self.num_genes].reshape(-1, self.num_genes, self.ndim)
 
-        # Wrap the phases to [0, 2*pi]
-        # trajectories = trajectories % (2 * np.pi)
-
         return trajectories
-        # return np.sin(trajectories)
-        # return transform_traj(trajectories)
 
 
 # Function to wrap phase differences between [-pi, pi]
@@ -233,30 +201,15 @@ def generate_data(ode_system,
     os.makedirs(save_folder, exist_ok=True)
 
     # ==================== Initial states ================
-    # Get the state range of the system
-    # data_range = np.stack(ode_system.state_range, axis=0)    
-
-    # # Separate the minimum and maximum values for each dimension
-    # min_vals = data_range[0]
-    # max_vals = data_range[1]
-
     ndim = ode_system.ndim
 
-    # # Generate the random initial conditions
-    # random_values = np.random.rand(num_samples, num_nodes, ndim)
-    # # Scale each dimension by the range (min, max)
-    # initial_states = min_vals + random_values * (max_vals - min_vals)
+    # Generate the random initial conditions
     initial_states = ode_system._init_state(num_samples)
 
-    # ==================== Adjacency matrices ================
-    # THIS IS WHAT WILL BE PASSED TO THE MODEL
     # Adjacency matrix for space (node-to-node interaction)
-    ode_system.w = ode_system._init_frequencies(num_samples, homogeneous=True)  # Update the frequencies
-    # ode_system.w = ode_system._init_frequencies(num_samples, homogeneous=False)  # Update the frequencies
-    # initial_states = ode_system.w  # The natural frequencies are the initial states
-    # initial_states = initial_states + ode_system.w[..., None]
-    # initial_states = np.sin(initial_states)  # Initial states are the natural frequencies
+    ode_system.w = ode_system._init_frequencies(num_samples, homogeneous=True)  # Update the frequencies = initial states
 
+    # ==================== Adjacency matrices ================
     # This is what is going to go to the model
     A_m = generate_graph(num_nodes, 'fully_connected', {})
     # At_m = generate_graph(num_nodes, 'fully_connected', {})
@@ -279,41 +232,13 @@ def generate_data(ode_system,
     A = generate_graph(num_nodes, spatial_graph_type, graph_params)
     At = generate_graph(num_nodes, temporal_graph_type, graph_params)
 
-    # Update A -- this is what is going to be used to simulate the system
+    # Update A - Graph connectivity used to simulate the system
     ode_system.A = A * ode_system.k
     ode_system.At = At
     
     for i in range(num_samples):
-        # # Generate the adjacency matrices
-        # A = generate_graph(num_nodes, spatial_graph_type, graph_params)
-        # At = generate_graph(num_nodes, temporal_graph_type, graph_params)
-
-        # # Update A -- this is what is going to be used to simulate the system
-        # ode_system.A = A * ode_system.k
-        # ode_system.At = At
-
         xyz[i] = ode_system.simulate(length=length, dt=dt, init_state=initial_states[i], A=None, idx=i)
-        # xyz_predicted[i] = ode_system.simulate(length=predicted_length, dt=dt, init_state=xyz[i, -1], A=None, idx=i)
         xyz_predicted[i] = ode_system.simulate(length=predicted_length+dt*1.1, dt=dt, init_state=xyz[i, -1], A=None, idx=i)[1:]
-
-        # dis = compute_phase_diff_matrix(xyz[i])
-        # W = dis * space_coupling 
-
-        # Plot trajectories
-        # import matplotlib 
-        # matplotlib.use('TkAgg')
-        # phases = xyz[0][:, :ode_system.num_genes]
-        # t = np.arange(0, phases.shape[0])
-        # fig, ax = plt.subplots(ode_system.num_genes, 1, figsize=(20, 10), squeeze=False)
-        # for ix in range(ode_system.num_genes):
-        #     # ix = 5    
-        #     ax[ix, 0].plot(t, np.sin(phases[:, ix]), label=f'Oscillator {ix+1}')
-        #     # ax[ix, 0].plot(t, phases[:, ix], label=f'Oscillator {ix+1}')
-        #     # ax[0, i].set_xlabel('Time')
-        #     # ax[0, i].set_ylabel('Phase')
-        #     ax[ix, 0].set_title(f'Oscillator {ix+1}')
-        # # ax.legend()
-        # plt.show()
 
         # Create graphs with DGL
         graph_dict = {}
@@ -330,7 +255,6 @@ def generate_data(ode_system,
 
         # Add edge data for spatial and temporal connections
         hg_graph.edges['space'].data['cat'] = torch.tensor(W[u_space, v_space]).unsqueeze(1).unsqueeze(2).repeat(1, 1, len(t))
-        # hg_graph.edges['space'].data['cat'] = torch.tensor(W[:, u_space, v_space, :]).permute(1, 2, 0)
         hg_graph.edges['time'].data['cat'] = torch.tensor(Wt[u_time, v_time]).unsqueeze(1).unsqueeze(2).repeat(1, 1, len(t))
 
         # Add node data
@@ -351,19 +275,16 @@ class KuramotoDataset(SyntheticDataset):
     """
     Kuramoto dataset
     """
-    def __init__(self, name, save_dir=None, reprocess=False, 
+    def __init__(self, name, save_dir=None, reprocess=False,
                  has_labels=False, save_info=True,
-                 num_samples=10, 
+                 num_samples=10,
                  num_nodes=3,
-                 duration=50, 
+                 duration=50,
                  dt=0.05,
-                 spatial_coupling=1, 
-                 temporal_coupling=1, 
-                 g=1,
-                 h=1,
-                 b=0,
+                 spatial_coupling=1,
+                 temporal_coupling=1,
                  k=1/3,
-                 graph_params={}, 
+                 graph_params={},
                  spatial_graph_type='barabasi', temporal_graph_type='identity'):
         
         self._name = f"{name}"
@@ -377,7 +298,7 @@ class KuramotoDataset(SyntheticDataset):
                 shutil.rmtree(self._save_path, ignore_errors=True)
                 os.makedirs(self._save_path, exist_ok=True)
         # ODE system
-        self.system_fn = Kuramoto(num_genes=num_nodes, g=g, b=b, h=h, k=k)
+        self.system_fn = Kuramoto(num_genes=num_nodes, k=k)
         self.duration = duration
         self.dt = dt
 
@@ -492,48 +413,21 @@ class KuramotoDataset(SyntheticDataset):
         # Get the context points
         # ==================
         num_frames = node_data['nfeatures'].shape[-1]
-        num_context = int(0.2*num_frames)   # These are like 'control' points        
-        # Get the set of context points
-        # num_subjects = in_data.shape[0]
-        # context_pts = np.zeros((num_subjects, num_context+1), dtype=int)
-        # for s in range(0, num_subjects):
-        #     s_context_pts = np.random.choice(np.arange(1, total_points-1), num_context, replace=False)
-        #     s_context_pts = np.concatenate([np.array([0]), s_context_pts])  # Add always intial point to the context
-        #     context_pts[s, :] = s_context_pts
-
-        # context_pts = np.random.choice(np.arange(1, num_frames-1), num_context, replace=False)
-        # context_pts = np.concatenate([np.array([0]), context_pts])  # Add always intial point to the context        
         context_pts = np.arange(0, num_frames+1, 3)  # Fix context points
         target_pts = np.arange(0, num_frames)  # All of them
 
         # ==================
         # Transform the data
         # ==================
-        # or_nfeatures = node_data['nfeatures']
         nfeatures = self._transform['nfeatures'](node_data['nfeatures'].permute(2, 0, 1)).permute(1, 2, 0)        
         nfeatures_predicted = self._transform['nfeatures'](node_data['nfeatures_predicted'].permute(2, 0, 1)).permute(1, 2, 0)
-        # pos_data = self._transform['pos'](node_data['pos'].permute(2, 0, 1)).permute(1, 2, 0)
-
-        # import matplotlib
-        # matplotlib.use('TkAgg')
-
-        # fig, ax = plt.subplots(1, 2, figsize=(20, 10), squeeze=False)
-        # # ax[0, 0].plot(node_data['nfeatures'][0, 0, :].detach().numpy())
-        # # ax[0, 1].plot(node_data['nfeatures'][1, 0, :].detach().numpy())
-        # ax[0, 0].plot(nfeatures[0, 0, :].detach().numpy())
-        # ax[0, 0].plot(nfeatures[1, 0, :].detach().numpy())
-        # ax[0, 0].plot(nfeatures[2, 0, :].detach().numpy())
-        # plt.show()
 
         # Transform the edge data -- Don't transform the edges
         edge_space = edge_data['space']
         edge_time = edge_data['time']
-        # edge_space = self._transform['space'](edge_data['space'].permute(2, 0, 1)).permute(1, 2, 0)
-        # edge_time = self._transform['time'](edge_data['time'].permute(2, 0, 1)).permute(1, 2, 0)
 
         # Input data
         input_node_data = {'features': nfeatures,
-                           # 'pos': pos_data,
                            'time': node_data['time'],
                            'region_id': node_data['region_id'],
                            'features_predicted': nfeatures_predicted,
@@ -549,15 +443,7 @@ class KuramotoDataset(SyntheticDataset):
 
 
 def get_parser():
-    # By default    
     paper_folder = "/media/jaume/DATA/Data/Multiplex_Synthetic_FINAL"
-    # paper_folder = "/usr/data/Multiplex_Synthetic_FINAL"
-    # study_name = "Multiplex_Kuramoto"
-    # study_name = "Multiplex_Kuramoto_ADAM_FINAL"
-    # study_name = "Multiplex_Kuramoto_Pred"
-    # study_name = "Multiplex_Kuramoto_ADAM_FINAL_MAE"
-    # study_name = "Multiplex_Kuramoto_ADAM_END"
-    # study_name = "Multiplex_Kuramoto_DIMENSIONS"
     study_name = "Multiplex_Kuramoto_DIMENSIONS_NEW_LOSS"
     
     parser = argparse.ArgumentParser(description='Kuramoto Oscillators')
@@ -666,54 +552,7 @@ def main():
     else:
         num_samples = args.num_samples
 
-    # kuramoto_evol = Kuramoto(num_genes=10, g=1, b=1, h=1)
-    # kuramoto_trajectories = kuramoto_evol.simulate(length=50, dt=0.05, init_state=None)    
-    # generate_data(
-    #     kuramoto_evol,
-    #     num_samples=100,
-    #     length=50,
-    #     dt=0.05,
-    #     num_nodes=10,
-    #     space_coupling=0.1,
-    #     time_coupling=0.1,
-    #     save_folder=save_folder,
-    #     spatial_graph_type='barabasi',
-    #     temporal_graph_type='fully_connected',
-    #     graph_params={'m': 3}
-    # )
-
-
-    # # Initialize Kuramoto system
-    # kuramoto = Kuramoto(num_genes=10, g=2, h=1, b=0, k=1)
-
-    # # Simulate
-    # init_state = kuramoto._init_state()
-    # # kuramoto.w = np.zeros_like(kuramoto.w)
-    # kuramoto.w = kuramoto._init_frequencies()
-    # init_state = kuramoto.w
-    # trajectory = kuramoto.simulate(length=50, dt=0.05, init_state=init_state[0])    
-    # # init_state = np.concatenate((kuramoto._init_state(), kuramoto._init_frequencies()), axis=1)
-    # # t = np.linspace(0, 100, 100)  # Time points
-    # # trajectory = odeint(kuramoto.system_fn, init_state[0], t)
-
-    # # Plot trajectories
-    # import matplotlib 
-    # matplotlib.use('TkAgg')
-    # phases = trajectory[:, :kuramoto.num_genes]
-    # t = np.arange(0, phases.shape[0])
-    # fig, ax = plt.subplots(kuramoto.num_genes, 1, figsize=(20, 10), squeeze=False)
-    # for i in range(kuramoto.num_genes):
-    #     # i = 5    
-    #     ax[i, 0].plot(t, np.sin(phases[:, i]), label=f'Oscillator {i+1}')
-    #     # ax[0, i].set_xlabel('Time')
-    #     # ax[0, i].set_ylabel('Phase')
-    #     ax[i, 0].set_title(f'Oscillator {i+1}')
-    # # ax.legend()
-    # plt.show()
-
-    # Create the dataset
-    # NOTE: For the moment g, h and b are not used . But keep them for now just in case.
-    # NOTE: Important to leave g = 1. 
+    # Create the dataset        
     dataset = KuramotoDataset(name='KuramotoOscillator',
                               save_dir=save_folder,
                               reprocess=args.reprocess,
@@ -761,7 +600,7 @@ def main():
     use_position = False
     use_time = False
     dt_step_size = 1/((duration/dt)*0.5)
-    # dt_step_size = 0.05
+    
     default_config = {'hidden_dim': hidden_dim, 
                       'hidden_dim_ext': hidden_dim_ext, 
                       'latent_dim': latent_dim,
@@ -915,12 +754,8 @@ def main():
     
     if sq_database or run_best:
         steps_to_predict = int(duration/dt)
-        # steps_to_predict = int(duration / dt_step_size)
-        # print(steps_to_predict)
-        # time_to_predict = np.arange(0, steps_to_predict, 1)  # Predict 100 steps more
         time_to_predict = torch.arange(0, steps_to_predict, 1)
-        pred_trajectory, pred_latent, tgt_trajectory = objective_optuna.predict_from_latent(model, objective_optuna.dataset, time_to_predict, model_params, device=device)
-        # The shape of the results is [num_samples, num_features, num_nodes, num_time_steps]
+        pred_trajectory, pred_latent, tgt_trajectory = objective_optuna.predict_from_latent(model, objective_optuna.dataset, time_to_predict, model_params, device=device)        
 
         # Save as metric the error in the predicted trajectory
         total_mse = (tgt_trajectory - pred_trajectory.mean[..., 1:]).square().mean(dim=0).sum()
@@ -956,13 +791,6 @@ def main():
                                     plot_spatial=False, save_format=save_format, transform=transform_traj)
         save_training_convergence(res_training, save_folder, save_format=save_format)
         plot_results(model, objective_optuna, model_params, save_folder, plot_individual=True, plot_spatial=False, save_format=save_format, transform=transform_traj)
-
-        # plot_combined_trajectories(model, objective_optuna, model_params, save_folder, pred_latent, pred_trajectory, plot_individual=True, plot_spatial=False, 
-        #                         fts_to_predict=None, true_trajectory=tgt_trajectory, normalization=normalization, transform=transform_traj)        
-        # plot_predicted_trajectories(objective_optuna, pred_latent, pred_trajectory, save_folder,
-        #                             normalization=normalization, plot_individual=True, true_trajectory=tgt_trajectory, plot_spatial=False, transform=transform_traj)
-        # save_training_convergence(res_training, save_folder)
-        # plot_results(model, objective_optuna, model_params, save_folder, plot_individual=True, plot_spatial=False, transform=transform_traj)
 
 
 if __name__ == '__main__':

@@ -16,8 +16,7 @@ def collate(samples):
     """
     graphs, label, context_pts, target_pts, input_node_data, input_edge_data = map(list, zip(*samples))    
 
-    batched_graph = dgl.batch(graphs)
-    # labels = torch.tensor(labels)
+    batched_graph = dgl.batch(graphs)    
 
     # Frame indices
     context_pts = torch.tensor(np.array(context_pts))
@@ -36,19 +35,6 @@ def collate(samples):
     # Predicted data
     node_predicted = torch.stack([ndata['features_predicted'] for ndata in input_node_data], dim=0).permute(0, 2, 1, 3).float()
 
-    # in_node_pos = torch.stack([ndata['pos'] for ndata in input_node_data], dim=0).permute(0, 2, 1, 3)
-
-    # avg_node_data = in_node_data.mean(dim=0)
-    # import matplotlib
-    # matplotlib.use('TkAgg')
-    # import matplotlib.pyplot as plt
-    # fig, ax = plt.subplots(1, 1)
-    # ax.plot(in_node_data[0, 0, 0, :].detach().numpy())
-    # ax.plot(in_node_data[0, 0, 1, :].detach().numpy())
-    # # ax.plot(avg_node_data[0, 0, :].detach().numpy())
-    # # ax.plot(avg_node_data[0, 1, :].detach().numpy())
-    # plt.show()
-
     # Region ID
     in_region_id = torch.stack([ndata['region_id'] for ndata in input_node_data], dim=0).permute(0, 2, 1).float()
 
@@ -58,15 +44,10 @@ def collate(samples):
     in_edge_space = torch.stack([edata['space'] for edata in input_edge_data], dim=0).permute(0, 2, 1, 3).float()
     in_edge_time = torch.stack([edata['time'] for edata in input_edge_data], dim=0).permute(0, 2, 1, 3).float()
 
-    # Global data
-    # global_data = torch.vstack(global_data).float()
-
     # Gathter the data
-    # input_data = (time, in_node_data, in_node_pos, in_edge_space, in_edge_time, global_data, in_region_id)
     input_data = (time, in_node_data, in_edge_space, in_edge_time, in_region_id, node_predicted)
     indices = (context_pts, target_pts)
 
-    # return batched_graph, input_data, indices, labels
     return batched_graph, input_data, indices
 
 
@@ -153,24 +134,13 @@ class SyntheticDataset(DGLDataset):
         graph = self.graph[idx]
 
         # Get the node and edge data
-        node_data = self.nodes_data[i]
-        edge_data = self.edges_data[i]
+        node_data = self.nodes_data[idx]
+        edge_data = self.edges_data[idx]
 
         # ==================
         # Get the context points
         # ==================
-        num_context = 20   # These are like 'control' points        
         total_points = node_data['nfeatures'].shape[-1]
-        # Get the set of context points
-        # num_subjects = in_data.shape[0]
-        # context_pts = np.zeros((num_subjects, num_context+1), dtype=int)
-        # for s in range(0, num_subjects):
-        #     s_context_pts = np.random.choice(np.arange(1, total_points-1), num_context, replace=False)
-        #     s_context_pts = np.concatenate([np.array([0]), s_context_pts])  # Add always intial point to the context
-        #     context_pts[s, :] = s_context_pts
-
-        # context_pts = np.random.choice(np.arange(1, total_points-1), num_context, replace=False)
-        # context_pts = np.concatenate([np.array([0]), context_pts])  # Add always intial point to the context
         context_pts = np.arange(0, total_points+1, 3)  # Fix context points
         target_pts = np.arange(0, total_points)  # All of them
 
@@ -178,30 +148,15 @@ class SyntheticDataset(DGLDataset):
         # Transform the data
         # ==================
         nfeatures = self._transform['nfeatures'](node_data['nfeatures'].permute(2, 0, 1)).permute(1, 2, 0)
-        # pos_data = self._transform['pos'](node_data['pos'].permute(2, 0, 1)).permute(1, 2, 0)
-
-        # pos_data = node_data['pos']
-        # pos_data = pos_data[:, :2]  # Don't use the Z-coordinate
-        # import matplotlib.pyplot as plt
-        # import matplotlib; matplotlib.use('TkAgg')
-        # x = node_data['pos'][10][0]
-        # y = node_data['pos'][10][1]
-        # z = node_data['pos'][10][2]
-        # fig, ax = plt.subplots(1, 3)
-        # ax[0].plot(x, y); ax[1].plot(x, z); ax[2].plot(y, z); plt.show()
 
         # Transform the edge data -- Don't transform the edges
         edge_space = edge_data['space']
         edge_time = edge_data['time']
-        # edge_space = self._transform['space'](edge_data['space'].permute(2, 0, 1)).permute(1, 2, 0)
-        # edge_time = self._transform['time'](edge_data['time'].permute(2, 0, 1)).permute(1, 2, 0)
 
         # Input data
         input_node_data = {'features': nfeatures,
-                        #    'pos': pos_data,
                            'time': node_data['time'],
                            'region_id': node_data['region_id'],
-                        #    'predict': nfeatures[:, fts_to_predict],
                            }
                 
         input_edge_data = {'space': edge_space,

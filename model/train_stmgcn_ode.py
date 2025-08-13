@@ -14,7 +14,7 @@ from tqdm import tqdm  # Make sure to install tqdm (pip install tqdm)
 from torch.utils.tensorboard import SummaryWriter
 
 from dataset.dataset_utils import collate
-from model.spatial_ode import STMultiplexODE
+from model.stgnp import STGNP
 from utils.train_loop import train_model
 from utils.losses import FocalLoss, LossODEProcess
 from utils.normalisations import MaxMin_Normalization, Ratio_Normalization, ClampTensor, SpatialMultivariate_Normalization, compute_norm_info
@@ -65,7 +65,7 @@ def build_model_multiplex(params,
     depth_nodes = params.get('depth_nodes', depth_nodes)
     depth_edges = params.get('depth_edges', depth_edges)
 
-    model_stm = STMultiplexODE(
+    model_stm = STGNP(
         in_features, 
         hidden_dim, 
         latent_dim,
@@ -158,25 +158,12 @@ def batch_loop(model: torch.nn.Module,
     
     # Get the logger
     logging.getLogger().setLevel(logging.INFO)
-
-    #TODO - Important!!: Need to add these stuff!!
-    # Check if external data is used or not    
-    apply_penalties = kwargs.get('apply_penalties', True)
+        
     epoch = kwargs.get('epoch', 0)
     scaler = kwargs.get('scaler', None)
     predict_beyond = kwargs.get('predict_beyond', False)
-
-    # Penalty weights
-    l1_weight = kwargs.get('l1_weight', 0.0)
-    l2_weight = kwargs.get('l2_weight', 0.0)
     use_position = kwargs.get('use_position', False)
     use_region = kwargs.get('use_region', False)    
-
-    # Output additional information in the test loop
-    output_probs = kwargs.get('output_probs', False)
-
-    # Re-start scores     
-    num_params = sum([len(p) for p in model.parameters()])
 
     if train_model:
         model.train()
@@ -194,12 +181,9 @@ def batch_loop(model: torch.nn.Module,
     epoch_metrics = {
         'Total_loss': 0.0,
         'L_rec': 0.0,
-        'L_class': 0.0,
         'L_kl': 0.0,
-        'L_bc': 0.0,
         'L_lat': 0.0,
         'L_graph': 0.0,
-        'accuracy': 0.0,
         'mse': 0.0,
         'mae': 0.0,
         'mse_pred': 0.0,
@@ -213,9 +197,7 @@ def batch_loop(model: torch.nn.Module,
         if optimizer is not None and train_model:
             optimizer.zero_grad()
 
-        # Wrap forward pass and loss computation in autocast for mixed precision.
-        # with torch.amp.autocast(device):
-        # Get the data
+        # Get the data        
         graph = batch[0].to(device)
         label = batch[1].to(device)
         
@@ -246,11 +228,7 @@ def batch_loop(model: torch.nn.Module,
         tgt_node_data = tgt_node_data.to(device).float()  # All node node data
         tgt_node_pos = tgt_node_pos.to(device).float()
         target_pts = target_pts.to(device) #.float()
-        tgt_pred = tgt_pred.to(device).float()  # Just thickness and volume
-                
-        # If we only predict a subset of the time-series data
-        # tgt_pred = torch.cat((tgt_node_data, tgt_node_pos), dim=1).float()
-        # tgt_pred = torch.cat([tgt_pred, tgt_node_pos], dim=1)
+        tgt_pred = tgt_pred.to(device).float()  # Thickness and volume
 
         if use_region:
             rids = region_id
@@ -283,7 +261,7 @@ def batch_loop(model: torch.nn.Module,
             continue
 
         # Compute the loss
-        class_data = output[0]  # Classification ouptut
+        # class_data = output[0]  # Classification ouptut
         p_y_pred = output[1]  # Reconstruction output - distribution
         latent_rec = output[2] # Latent space trajectory
         graph_reg = output[3]  # Graph regularization terms
@@ -291,8 +269,6 @@ def batch_loop(model: torch.nn.Module,
         q_context = output[5]  # Distribution of context latent space
         tgt_edge_distr = output[6]  # Distribution of target edge space
         ctx_edge_distr = output[7]  # Distribution of context edge space
-        pred_global = output[8]  # Global data prediction
-        prototypes = model.prototypes
 
         if kwargs.get('warmup', False):
             T = tgt_pred.shape[-1]
@@ -304,23 +280,16 @@ def batch_loop(model: torch.nn.Module,
             weights = torch.tensor([decay_rate**t for t in range(T)], device=tgt_pred.device, dtype=torch.float32)
             warmup = True
         else:
-            weights = None
-            # weights = torch.tensor([1.0 for t in range(tgt_pred.shape[-1])], device=tgt_pred.device)
-            warmup = False
-            # print("No warmup")
+            weights = None            
+            warmup = False            
 
-        batch_loss, loss_components = criterion(p_y_pred, tgt_pred, class_data, label, q_target=q_target, q_context=q_context, 
-                                                latent_values=latent_rec, graph_reg=graph_reg, tgt_edges=tgt_edge_distr, 
-                                                ctx_edges=ctx_edge_distr, pred_external=pred_global, tgt_external=ext_predict_data, 
-                                                only_rec=kwargs.get('training_regression', False), prototypes=prototypes, 
-                                                warmup=warmup, weights=weights, rampup_weight=kwargs.get('rampup_weight', 1.0))
-
-        # Penalties
-        # l1_penalty = l1_weight * sum([p.abs().sum() for p in model.parameters()]) / num_params
-        # l2_penalty = l2_weight * sum([(p ** 2).sum() for p in model.parameters()]) / num_params
-        # if apply_penalties:
-        #     # print(f'Applying penalties: L1: {l1_penalty.item()} - L2: {l2_penalty.item()}')
-        #     batch_loss += l1_penalty + l2_penalty
+        batch_loss, loss_components = criterion(p_y_pred, tgt_pred, 
+                                                q_target=q_target, q_context=q_context, 
+                                                latent_values=latent_rec, graph_reg=graph_reg, 
+                                                tgt_edges=tgt_edge_distr, ctx_edges=ctx_edge_distr,                                                 
+                                                warmup=warmup, weights=weights,
+                                                rampup_weight=kwargs.get('rampup_weight', 1.0),
+                                                )
         
         # Backward and optimize
         if train_model:
@@ -357,18 +326,13 @@ def batch_loop(model: torch.nn.Module,
             for key, val in loss_components.items():
                     epoch_metrics[key] += val #.item()
 
-            # Accuracy         
-            _, predicted = torch.max(class_data.data, 1)
-            correct = (predicted == label.squeeze()).sum().item()
-            accuracy = correct / len(label.squeeze())                
-
             # MSE
             mse = (p_y_pred.mean - tgt_pred).square().float().sum(dim=-1).mean().item()
 
             # MAE
             mae = (p_y_pred.mean - tgt_pred).abs().float().sum(dim=-1).mean().item()
 
-            epoch_metrics['accuracy'] += accuracy
+            # Save them            
             epoch_metrics['mse'] += mse
             epoch_metrics['mae'] += mae
 
@@ -380,11 +344,6 @@ def batch_loop(model: torch.nn.Module,
 
     if get_latent_state:
         return list_latents
-
-    if output_probs:
-        decisions = [predicted, label.squeeze()]
-        probs = class_data
-        return epoch_metrics['Total_loss'], epoch_metrics, decisions, probs
     
     # Return the metrics and the last batch output
     return epoch_metrics['Total_loss'], epoch_metrics, output + (tgt_pred,), outout_pred
@@ -473,7 +432,6 @@ class Objective_Multiplex(object):
         # Get the dimensions of the problem
         feat_dim = len(self.dataset.list_node_features)
         pos_dim = len(self.dataset.pos_node_features)
-        # pos_dim = 2
         time_dim = len(self.dataset.time_node_features)
         region_dim = len(self.dataset.region_ids)
         
@@ -482,12 +440,9 @@ class Objective_Multiplex(object):
         in_node_dim = in_node_dim + region_dim if self.use_region else in_node_dim
         in_node_dim = in_node_dim + time_dim if self.use_time else in_node_dim
         self.in_node_dim = in_node_dim
-                
-        # elif rec_data == 'all':
-        #     rec_dim = in_node_dim   # Autoencoder
+        
+        # Out dimensions (trajectory features, not positions)
         self.out_dim = 2  # Median Thickness and Volume Index
-        # self.out_dim = 3  # Add Median Intensity or J
-        # self.out_dim = 4  # Add Median Intensity and Median J
         if self.use_position:
             self.out_dim = self.out_dim + pos_dim
 
@@ -502,9 +457,6 @@ class Objective_Multiplex(object):
         
         # External dimensions, non-graph data    
         self.external_dim = len(self.dataset.list_global_features) if self.use_global_data else 0
-
-        # Use MSE - not variational
-        # self.use_mse = False
 
     def get_default_params(self):
         default_params = {
@@ -610,16 +562,11 @@ class Objective_Multiplex(object):
         # Set the trasnforms for the dataset
         if self.normalization == "NoNorm":
             data_transforms = {
-                # 'pos': ClampTensor(norm_info_pos['min_clamp'], norm_info_pos['max_clamp']),
-                'pos': transforms.Normalize(0, 1),
-                # 'nfeatures': ClampTensor(norm_info_fts['min_clamp'], norm_info_fts['max_clamp']),
-                'nfeatures': transforms.Normalize(0, 1),                
-                # 'global': transforms.Normalize(norm_info_ext['mean'], norm_info_ext['std']),
-                'global': transforms.Normalize(0, 1),
-                # 'space': ClampTensor(norm_info_edge_space['min_clamp'], norm_info_edge_space['max_clamp']),
-                'space': transforms.Normalize(0, 1),
-                # 'time': ClampTensor(norm_info_edge_time['min_clamp'], norm_info_edge_time['max_clamp']),
-                'time': transforms.Normalize(0, 1),
+                'pos': lambda x: x,
+                'nfeatures': lambda x: x,
+                'global': lambda x: x,
+                'space': lambda x: x,
+                'time': lambda x: x,
                 }
         elif self.normalization == "Spatial":
             data_transforms = {
@@ -630,13 +577,6 @@ class Objective_Multiplex(object):
                 'time': SpatialMultivariate_Normalization(norm_info_edge_time['mean_data'], norm_info_edge_time['K1'], norm_info_edge_time['K2']),
                 }
         elif self.normalization == "ZNorm":
-            # data_transforms = {
-            #     'pos': nn.Sequential(ClampTensor(norm_info_pos['min_clamp'], norm_info_pos['max_clamp']), transforms.Normalize(norm_info_pos['mean'], norm_info_pos['std'])),
-            #     'nfeatures': nn.Sequential(ClampTensor(norm_info_fts['min_clamp'], norm_info_fts['max_clamp']), transforms.Normalize(norm_info_fts['mean'], norm_info_fts['std'])),
-            #     'global': nn.Sequential(ClampTensor(norm_info_ext['min_clamp'], norm_info_ext['max_clamp']), transforms.Normalize(norm_info_ext['mean'], norm_info_ext['std'])),
-            #     'space': nn.Sequential(ClampTensor(norm_info_edge_space['min_clamp'], norm_info_edge_space['max_clamp']), transforms.Normalize(norm_info_edge_space['mean'], norm_info_edge_space['std'])),
-            #     'time': nn.Sequential(ClampTensor(norm_info_edge_time['min_clamp'], norm_info_edge_time['max_clamp']), transforms.Normalize(norm_info_edge_time['mean'], norm_info_edge_time['std'])),
-            #     }
             data_transforms = {
                 'pos': transforms.Normalize(norm_info_pos['mean'], norm_info_pos['std']),
                 'nfeatures': transforms.Normalize(norm_info_fts['mean'], norm_info_fts['std']),
@@ -654,12 +594,6 @@ class Objective_Multiplex(object):
                 }
         elif self.normalization == "Ratio":
             data_transforms = {
-                # 'pos': nn.Sequential(ClampTensor(norm_info_pos['min_clamp'], norm_info_pos['max_clamp']), Ratio_Normalization(norm_info_pos['mean'])),
-                # 'nfeatures': nn.Sequential(ClampTensor(norm_info_fts['min_clamp'], norm_info_fts['max_clamp']), Ratio_Normalization(norm_info_fts['mean'])),
-                # # 'global': nn.Sequential(ClampTensor(norm_info_ext['min_clamp'], norm_info_ext['max_clamp']), transforms.Normalize(norm_info_ext['mean'], norm_info_ext['std'])),
-                # 'global': nn.Sequential(ClampTensor(norm_info_ext['min_clamp'], norm_info_ext['max_clamp']), Ratio_Normalization(norm_info_ext['mean'])),
-                # 'space': nn.Sequential(ClampTensor(norm_info_edge_space['min_clamp'], norm_info_edge_space['max_clamp']), Ratio_Normalization(norm_info_edge_space['mean'])),
-                # 'time': nn.Sequential(ClampTensor(norm_info_edge_time['min_clamp'], norm_info_edge_time['max_clamp']), Ratio_Normalization(norm_info_edge_time['mean'])),
                 'pos': Ratio_Normalization(norm_info_pos['mean']),
                 'nfeatures': Ratio_Normalization(norm_info_fts['mean']),
                 'global': Ratio_Normalization(norm_info_ext['mean']),
@@ -773,21 +707,6 @@ class Objective_Multiplex(object):
                 mse_pred = (pred_trajectory.mean[..., 1:] - tgt_pred).square().float().mean().item()
                 mae_pred = (pred_trajectory.mean[..., 1:] - tgt_pred).abs().float().mean().item()
 
-                # import matplotlib.pyplot as plt
-                # import matplotlib
-                # matplotlib.use('TkAgg')
-
-                # fig, ax = plt.subplots(1, 3, figsize=(10, 5))
-                # ax[0].set_title('Predicted')
-                # ax[0].plot(pred_trajectory.mean[0,0].cpu().numpy(), label='Predicted')                
-                # # ax[0].legend()
-                # ax[1].set_title('Ouptut')                
-                # ax[1].plot(output[1].mean[0,0].cpu().numpy(), label='Output')
-                # # ax[1].legend()
-                # ax[2].set_title('Target')
-                # ax[2].plot(tgt_pred[0,0].cpu().numpy(), label='Target')
-                # plt.show()
-
         return pred_trajectory, pred_latent, None
 
 
@@ -796,8 +715,6 @@ class Objective_Multiplex(object):
             params = self.default_params
 
         with torch.no_grad():
-            # dataset.is_test = True
-            # batch_size = len(dataset) if len(dataset) < 200 else 200
             batch_size = len(dataset)
             dataset_loader = DataLoader(copy.deepcopy(dataset), collate_fn=collate, batch_size=batch_size, shuffle=False)
             model.eval()
@@ -825,18 +742,9 @@ class Objective_Multiplex(object):
                     list_outputs.append(out_it)
 
                 # Combine the outputs
-                #TODO
-                class_data = torch.stack([out[0] for out in list_outputs], dim=0)
+                #TODO                
                 rec_data = torch.stack([out[1] for out in list_outputs], dim=0)            
                 latent_rec = torch.stack([out[2] for out in list_outputs], dim=0)
-
-                # class_data = output[0]  # Classification ouptut
-                # p_y_pred = output[1]  # Reconstruction output - distribution
-                # latent_rec = output[2] # Latent space trajectorys
-                # force = output[3]  # Force of the system
-                # q_target = output[4]  # Distribution of target latent space
-                # q_context = output[5]  # Distribution of context latent space    
-                # tgt_data = output[-1]
 
                 return (class_data, rec_data, latent_rec)
             else:
@@ -848,14 +756,11 @@ class Objective_Multiplex(object):
                     class_data_ = out[0]
                     p_y_pred = out[1]
                     latent_rec_ = out[2]
-                    graph_reg_ = out[3]
-                    # q_target = out[4]
+                    graph_reg_ = out[3]                    
                     q_context = out[5]
 
                     # The edges
                     q_space_ctx, q_time_ctx = out[7]
-                    # space_edges_ = q_space_ctx.mean
-                    # time_edges_ = q_time_ctx.mean
 
                     # Predicted global data
                     pred_g_ = out[8]
@@ -863,8 +768,6 @@ class Objective_Multiplex(object):
                     tgt_data_ = out[-3]
                     tgt_label_ = out[-2]
                     context_pts_ = out[-1]
-                    # tgt_data_ = out[-2]
-                    # tgt_label_ = out[-1]
 
                     rec_ft_ = p_y_pred.mean
                     rec_std_ = p_y_pred.scale
@@ -878,8 +781,6 @@ class Objective_Multiplex(object):
                         tgt_data = tgt_data_
                         tgt_label = tgt_label_
                         context_pts = context_pts_
-                        # space_edges = space_edges_
-                        # time_edges = time_edges_
                         pred_g = pred_g_
                     else:
                         class_data = torch.cat([class_data, class_data_], dim=0)
@@ -890,8 +791,6 @@ class Objective_Multiplex(object):
                         tgt_data = torch.cat([tgt_data, tgt_data_], dim=0)
                         tgt_label = torch.cat([tgt_label, tgt_label_], dim=0)
                         context_pts = torch.cat([context_pts, context_pts_], dim=0)
-                        # space_edges = torch.cat([space_edges, space_edges_], dim=0)
-                        # time_edges = torch.cat([time_edges, time_edges_], dim=0)
                         pred_g = torch.cat([pred_g, pred_g_], dim=0)                        
                 
                 del list_outputs

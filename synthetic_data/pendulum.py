@@ -14,14 +14,12 @@ from scipy.spatial.distance import pdist, squareform
 
 from model.train_stmgcn_ode import build_model_multiplex
 from synthetic_data.train_synthetic_models import ObjectiveSynthetic, batch_loop
-from synthetic_data.gene_evolution import generate_graph
 from utils.model_selection_sklearn import stratified_split
 from utils.utils import seed_everything, str2bool, get_best_params
-from experiments.ACDC_CV import plot_results, plot_combined_trajectories, get_data_in_original_scale
-from experiments.ACDC_All import plot_predicted_trajectories
 import torchvision.transforms as transforms
 from utils.model_selection_optuna import hypertune_optuna
-from model.testing_model import get_latex_table, wrap_latex_table, save_training_convergence
+from utils.graph_utils import generate_graph
+from model.plot_and_print_utils import get_latex_table, wrap_latex_table, save_training_convergence, plot_results, plot_combined_trajectories, get_data_in_original_scale, plot_predicted_trajectories
 
 
 def similarity_exp(dist, gamma=1, threshold=None):
@@ -60,10 +58,7 @@ def generate_data(ode_system,
     # Scale each dimension by the range (min, max)
     initial_states = min_vals + random_values * (max_vals - min_vals)
 
-    # ==================== Adjacency matrices ================
-    # These ones will be the same for all subjects - for the moment
-    # Edge features = 'coupling' strength or proximity
-    
+    # ==================== Adjacency matrices ================    
     # This is what is going to go to the model
     A_m = generate_graph(num_nodes, 'fully_connected', {})
     At_m = generate_graph(num_nodes, 'identity', {})
@@ -86,24 +81,6 @@ def generate_data(ode_system,
         xyz[i] = ode_system.simulate(length=length, dt=dt, init_state=initial_states[i])
         xyz_predicted[i] = ode_system.simulate(length=predicted_length+dt*1.1, dt=dt, init_state=xyz[i, -1])[1:]
 
-        # # Plot the trajectories of the pendulum
-        # xyz_plot = np.concatenate([xyz[i], xyz_predicted[i]], axis=0)
-        # t_plot = np.arange(0, len(xyz_plot), 1)
-        # import matplotlib
-        # matplotlib.use('TkAgg')
-        # fig, ax  = plt.subplots(1, 2, figsize=(6, 6))
-        # ax[0].plot(t_plot, xyz_plot[:, 0, 0], label='Pendulum 1')
-        # ax[0].plot(t_plot, xyz_plot[:, 1, 0], label='Pendulum 2')
-        # ax[0].set_title('Angle')
-        # ax[0].set_xlabel('Time')
-        # ax[0].set_ylabel('Angle')
-        # ax[1].plot(t_plot, xyz_plot[:, 0, 1], label='Pendulum 1')
-        # ax[1].plot(t_plot, xyz_plot[:, 1, 1], label='Pendulum 2')
-        # ax[1].set_title('Angular velocity')
-        # ax[1].set_xlabel('Time')
-        # plt.show()
-
-
         # Let's see if we can generate the graphs for DGL
         graph_dict = {}
             
@@ -118,20 +95,16 @@ def generate_data(ode_system,
         hg_graph = dgl.heterograph(graph_dict)
 
         # Assign the edge data
-        # Add dimension for the 'number of edges' and for the 'time' dimension
-        # hg_graph.edges['space'].data['cat'] = torch.tensor(W[i, u_space, v_space]).unsqueeze(1).unsqueeze(2).repeat(1, 1, len(t))
         hg_graph.edges['space'].data['cat'] = torch.tensor(W[u_space, v_space]).unsqueeze(1).unsqueeze(2).repeat(1, 1, len(t))
         hg_graph.edges['time'].data['cat'] = torch.tensor(Wt[u_time, v_time]).unsqueeze(1).unsqueeze(2).repeat(1, 1, len(t))
 
         # Assign the node data
         region_id_data = torch.arange(num_nodes)
         region_id_data = pd.get_dummies(region_id_data)
-
-        # ATTENTION!: HERE IS WHERE WE NEED TO ADD THE FEATURES
+        
         # [Batch, Time, Nodes, Features] -> [ Batch, Nodes, Features, Time]
         hg_graph.nodes['region'].data['nfeatures'] = torch.tensor(xyz[i]).permute(1, 2, 0)
         hg_graph.nodes['region'].data['nfeatures_predicted'] = torch.tensor(xyz_predicted[i]).permute(1, 2, 0)
-        # hg_graph.nodes['region'].data['pos'] = []  # No positions
         hg_graph.nodes['region'].data['time'] = torch.tensor(t).unsqueeze(0).unsqueeze(1).repeat(num_nodes, 1, 1)
         hg_graph.nodes['region'].data['region_id'] = torch.tensor(region_id_data.values)
 
@@ -305,17 +278,6 @@ class PendulumDataset(SyntheticDataset):
                       save_folder=self._save_path,
                       predicted_length=self.duration
                       )
-        
-        # Second group
-        # generate_data(self.system_fn2, 
-        #               num_samples=self.num_samples,
-        #               length=self.duration,
-        #               dt=self.dt,
-        #               num_nodes=self.num_nodes,
-        #               space_coupling=self.space_coupling,
-        #               time_coupling=self.time_coupling,
-        #               init_sample=self.num_samples,
-        #               save_folder=self._save_path,)
 
         # Load them as a list of graphs
         list_graphs = [g for g in os.listdir(self.save_dir) if g.endswith('.bin') and self.name not in g]
@@ -365,17 +327,6 @@ class PendulumDataset(SyntheticDataset):
         # Get the context points
         # ==================
         num_frames = node_data['nfeatures'].shape[-1]
-        num_context = int(0.2*num_frames)   # These are like 'control' points        
-        # Get the set of context points
-        # num_subjects = in_data.shape[0]
-        # context_pts = np.zeros((num_subjects, num_context+1), dtype=int)
-        # for s in range(0, num_subjects):
-        #     s_context_pts = np.random.choice(np.arange(1, total_points-1), num_context, replace=False)
-        #     s_context_pts = np.concatenate([np.array([0]), s_context_pts])  # Add always intial point to the context
-        #     context_pts[s, :] = s_context_pts
-
-        # context_pts = np.random.choice(np.arange(1, num_frames-1), num_context, replace=False)
-        # context_pts = np.concatenate([np.array([0]), context_pts])  # Add always intial point to the context        
         context_pts = np.arange(0, num_frames+1, 3)  # Fix context points
         target_pts = np.arange(0, num_frames)  # All of them
 
@@ -385,17 +336,13 @@ class PendulumDataset(SyntheticDataset):
         # The node data is in [Nodes, Features, Time] format
         nfeatures = self._transform['nfeatures'](node_data['nfeatures'].permute(2, 0, 1)).permute(1, 2, 0)
         nfeatures_predicted = self._transform['nfeatures'](node_data['nfeatures_predicted'].permute(2, 0, 1)).permute(1, 2, 0)
-        # pos_data = self._transform['pos'](node_data['pos'].permute(2, 0, 1)).permute(1, 2, 0)
 
         # Transform the edge data -- Don't transform the edges
         edge_space = edge_data['space']
         edge_time = edge_data['time']
-        # edge_space = self._transform['space'](edge_data['space'].permute(2, 0, 1)).permute(1, 2, 0)
-        # edge_time = self._transform['time'](edge_data['time'].permute(2, 0, 1)).permute(1, 2, 0)
 
         # Input data
         input_node_data = {'features': nfeatures,
-                           # 'pos': pos_data,
                            'time': node_data['time'],
                            'region_id': node_data['region_id'],
                            'features_predicted': nfeatures_predicted,

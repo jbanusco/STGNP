@@ -1,5 +1,3 @@
-import math
-import time
 import torch
 import torch.nn as nn
 from torch_geometric.utils import softmax
@@ -7,8 +5,6 @@ from torch_geometric.utils import softmax
 import dgl.function as fn
 from functools import partial
 from torch.nn import functional as F
-
-from model.layers import WIRE
 
 
 def symmetry_penalty(A):
@@ -61,14 +57,14 @@ def featurewise_cosine_similarity(x, y):
     return similarity
 
 
-class STGCN(nn.Module):
+class MPGCN(nn.Module):
     def __init__(self, 
                  in_dim,
                  out_dim, 
                  dyn_params,
                  edges_intra_nf=1, 
                  edges_inter_nf=1,
-                 name="STGCN", 
+                 name="MPGCN", 
                  bias=True, 
                  dropout=0.0, 
                  use_attention = False, 
@@ -88,32 +84,24 @@ class STGCN(nn.Module):
         This is our layer, in which we combine the multiple message passing
         :param aggr_type: aggregator function for the messages at each 'plane' and between planes
         """
-        super(STGCN, self).__init__()
+        super(MPGCN, self).__init__()
         self.name = name
         
         # Dimensions
         self.in_dim = in_dim  # Number dimensions in the node embedding / features  
-        self.out_dim = out_dim  # Number of output dimensions
-        # self.att_dim = self.in_dim // 2  # Attention dimensions
-        self.dyn_params = dyn_params
-        self.add_source = add_source
-        self.only_spatial = only_spatial
-        # self.only_spatial = True
+        self.out_dim = out_dim  # Number of output dimensions (latent dim.)
+        self.dyn_params = dyn_params  # Number of control parameters/dimensions
+        self.add_source = add_source  # In the end "add" the initial state (f0)
+        self.only_spatial = only_spatial # Use only "spatial" edges
         self.edges_inter_nf = edges_inter_nf  # Number of features in the inter-layer edges
         self.edges_intra_nf = edges_intra_nf  # Number of features in the intra-layer edges
-        self.edges_hidden = 32
-        self.nodes_hidden = 32
-        # self.memory_dim = 10
 
-        # Normalisation
+        # Hidden nodes and edge features
+        self.edges_hidden = 32
+        self.nodes_hidden = 32                
         use_affine = True
-        last_edges_layer = lambda: nn.Identity()  # Nothing or Tanh
-        last_control_layer = lambda: nn.Identity()  # Nothing
-        last_nodes_layer = lambda: nn.Identity()  
-        # use_norm = False
-        # self.norm_node = nn.LayerNorm(normalized_shape=self.in_dim, elementwise_affine=False)
-        # self.norm_node = nn.InstanceNorm1d(num_features=1)
-        self.norm_node = nn.Identity() # No normalization
+        self.update_control = True
+        self.norm_node = nn.Identity() # No node normalization
 
         # Options
         self.use_constant_edges = use_constant_edges  # Change the edges or not
@@ -136,68 +124,36 @@ class STGCN(nn.Module):
         self._reduce_mean = partial(torch.mean, dim=1)
 
         # ============================================= MLP transform/update the edges    
-        # self.in_edge_fts_space = self.edges_intra_nf + self.in_dim*2 + 1 if self.condition_on_time else self.edges_intra_nf + self.in_dim*2
-        # self.in_edge_fts_space = self.edges_intra_nf + self.in_dim + 1 if self.condition_on_time else self.edges_intra_nf + self.in_dim
         self.in_edge_fts_space = self.edges_intra_nf + 3 if self.condition_on_time else self.edges_intra_nf
         if self.use_hdyn:
+            # Use control params in the edge update
             self.in_edge_fts_space = self.in_edge_fts_space + self.dyn_params * 2
-        # self.in_edge_fts_space = self.in_edge_fts_space + 1  # The distance between the nodes
-        # self.in_edge_fts_space = self.in_edge_fts_space + self.att_dim # The values
 
         # Learnable score for each dimension
-        # Sigmoid
         scores_dim = self.in_dim + self.dyn_params + 3 if self.condition_on_time else self.in_dim + self.dyn_params
         self.scores_time = nn.Sequential(nn.Identity(), nn.Linear(scores_dim, self.edges_inter_nf, bias=False), nn.Sigmoid())
-        self.scores_space = nn.Sequential(nn.Identity(), nn.Linear(scores_dim, self.edges_intra_nf, bias=False), nn.Sigmoid())
-
-        # Memory for f_g and f_nn balance
-        # self.memory_predict = nn.Sequential(nn.Linear(self.memory_dim + self.dyn_params, 1, bias=False), 
-        #                                     nn.Tanh(),
-        #                                     )
-        
-        # self.memory_update = nn.Sequential(nn.Linear(self.memory_dim + self.dyn_params, self.memory_dim, bias=False),
-        #                                    )
+        self.scores_space = nn.Sequential(nn.Identity(), nn.Linear(scores_dim, self.edges_intra_nf, bias=False), nn.Sigmoid())        
 
         norm_fn = lambda: nn.LayerNorm(self.edges_hidden, elementwise_affine=use_affine) if use_norm else nn.Identity()
-        # norm_fn = lambda: nn.LayerNorm(self.edges_intra_nf, elementwise_affine=use_affine) if use_norm else nn.Identity()
-        # norm_fn = lambda: nn.InstanceNorm1d(self.edges_hidden, affine=use_affine) if use_norm else nn.Identity()
-        self.fc_space_edge = nn.Sequential(#nn.Dropout(dropout),
-            # WIRE(self.in_edge_fts_space, self.edges_hidden, bias=self.bias, dropout=0.),
+        self.fc_space_edge = nn.Sequential(
             nn.Linear(self.in_edge_fts_space, self.edges_hidden, bias=self.bias),
-            # nn.Linear(self.in_edge_fts_space, self.edges_intra_nf, bias=self.bias),
-            # nn.SiLU(),
-            # norm_fn(),
             nn.GELU(),
             norm_fn(),
             nn.Dropout(dropout),
-            nn.Linear(self.edges_hidden, self.edges_intra_nf, bias=self.bias),            
-            # nn.SiLU(),
-            # nn.Tanh(),
+            nn.Linear(self.edges_hidden, self.edges_intra_nf, bias=self.bias),
             )
         
-        # self.in_edge_fts_time = self.edges_inter_nf + self.in_dim + 1 if self.condition_on_time else self.edges_inter_nf + self.in_dim
-        # self.in_edge_fts_time = self.edges_inter_nf + self.in_dim + 1 if self.condition_on_time else self.edges_inter_nf + self.in_dim
         self.in_edge_fts_time = self.edges_inter_nf + 3 if self.condition_on_time else self.edges_inter_nf
         if self.use_hdyn:
             self.in_edge_fts_time = self.in_edge_fts_time + self.dyn_params
-        # self.in_edge_fts_time = self.in_edge_fts_time + 1 # The distance between the nodes
-        # self.in_edge_fts_time = self.in_edge_fts_time + self.att_dim # The values
 
         norm_fn = lambda: nn.LayerNorm(self.edges_hidden, elementwise_affine=use_affine) if use_norm else nn.Identity()
-        # norm_fn = lambda: nn.LayerNorm(self.edges_inter_nf, elementwise_affine=use_affine) if use_norm else nn.Identity()
-        # norm_fn = lambda: nn.InstanceNorm1d(self.edges_hidden, affine=use_affine) if use_norm else nn.Identity()
-        self.fc_time_edge = nn.Sequential(#nn.Dropout(dropout),
-            # WIRE(self.in_edge_fts_time, self.edges_hidden, bias=self.bias, dropout=0.),
+        self.fc_time_edge = nn.Sequential(
             nn.Linear(self.in_edge_fts_time, self.edges_hidden, bias=self.bias),
-            # nn.Linear(self.in_edge_fts_time, self.edges_inter_nf, bias=self.bias),
-            # nn.SiLU(),
-            # norm_fn(),
             nn.GELU(),
             norm_fn(),
             nn.Dropout(dropout),
-            nn.Linear(self.edges_hidden, self.edges_inter_nf, bias=self.bias),            
-            # nn.SiLU(),
-            # nn.Tanh(),
+            nn.Linear(self.edges_hidden, self.edges_inter_nf, bias=self.bias),
             )
 
         # ============================================= Attention options
@@ -213,10 +169,8 @@ class STGCN(nn.Module):
             self.Kx_time = nn.Linear(self.in_att, self.att_dim_time, bias=self.bias)
             self.Vx_time = nn.Linear(self.in_att, self.att_dim_time, bias=self.bias)
 
-        # ========= Node function
+        # ========= Node update function
         self.include_state = True
-        # num_in_dim = self.in_dim if self.only_spatial else self.in_dim*2
-        # num_in_dim = num_in_dim + self.in_dim if self.include_state else 0
         if self.use_diffusion:
             num_in_dim = self.in_dim * 1 # [h]
         else:            
@@ -225,165 +179,72 @@ class STGCN(nn.Module):
                 num_in_dim = self.in_dim + self.in_dim * self.edges_inter_nf + self.in_dim * self.edges_intra_nf
             else:
                 num_in_dim = self.in_dim * 3 # [h, dh_s, dh_t] 
-        # Time encoding      
-        update_dim = num_in_dim + self.dyn_params + 3 if self.condition_on_time else num_in_dim + self.dyn_params
-        
-        # shape: [num_nodes, num_features]
-        norm_fn = lambda: nn.LayerNorm(self.nodes_hidden, elementwise_affine=use_affine) if use_norm else nn.Identity()
-        # norm_fn = lambda: nn.LayerNorm(self.dyn_params, elementwise_affine=use_affine) if use_norm else nn.Identity()
-        # norm_fn = lambda: nn.InstanceNorm1d(self.nodes_hidden, affine=use_affine) if use_norm else nn.Identity()
 
-        # dt + time_encoding
+        # Get the dimensions
+        update_dim = num_in_dim + self.dyn_params + 3 if self.condition_on_time else num_in_dim + self.dyn_params
         control_dim = self.in_dim + self.dyn_params + 3 if self.condition_on_time else self.in_dim + self.dyn_params
-        self.control_update = nn.Sequential(
-            # WIRE(self.in_dim + self.dyn_params, self.nodes_hidden, bias=self.bias, dropout=0.),
-            nn.Linear(control_dim, self.nodes_hidden, bias=self.bias),  # classic            
-            # nn.Linear(self.in_dim + self.dyn_params, self.dyn_params, bias=self.bias),  # classic            
-            # nn.SiLU(),
-            # norm_fn(),
-            nn.SiLU(),
-            # nn.Linear(self.nodes_hidden, self.dyn_params, bias=self.bias),
+
+        # shape: [num_nodes, num_features]
+        norm_fn = lambda: nn.LayerNorm(self.nodes_hidden, elementwise_affine=use_affine) if use_norm else nn.Identity()        
+        
+        self.control_update = nn.Sequential(            
+            nn.Linear(control_dim, self.nodes_hidden, bias=self.bias),
+            nn.SiLU(),            
             nn.Linear(self.nodes_hidden, self.nodes_hidden, bias=self.bias),
             norm_fn(),
-            nn.SiLU(),
-            # norm_fn(),
+            nn.SiLU(),            
             nn.Dropout(dropout),
             nn.Linear(self.nodes_hidden, self.dyn_params, bias=self.bias),
-            # nn.Tanh(),
         )
 
         norm_fn = lambda: nn.LayerNorm(self.nodes_hidden, elementwise_affine=use_affine) if use_norm else nn.Identity()
-        # norm_fn = lambda: nn.LayerNorm(self.out_dim, elementwise_affine=use_affine) if use_norm else nn.Identity()
-        # norm_fn = lambda: nn.InstanceNorm1d(self.nodes_hidden, affine=use_affine) if use_norm else nn.Identity()
         self.fc_node = nn.Sequential(
-            # WIRE(update_dim, self.nodes_hidden, bias=self.bias, dropout=0.),
-            # nn.Linear(update_dim, self.nodes_hidden, bias=self.bias),
             nn.Linear(update_dim, self.nodes_hidden, bias=self.bias),
-            # nn.GELU(),
-            # norm_fn(),
-            nn.GELU(),
-            # nn.Linear(self.nodes_hidden, self.out_dim, bias=self.bias),
+            nn.GELU(),            
             nn.Linear(self.nodes_hidden, self.nodes_hidden, bias=self.bias),
             norm_fn(),
             nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(self.nodes_hidden, self.out_dim, bias=self.bias),
-            # nn.Tanh(),
             )
-
-        # ======= Summary state of the system
-        # At each iteration, we summarise the state of the system
-        self.summarise_state = summarise_state
-        summary_dim = self.out_dim + self.dyn_params
-        if self.summarise_state:
-            self.f_summary = nn.Linear(summary_dim, summary_dim, bias=self.bias)
-            self.f_previous = nn.Linear(summary_dim, summary_dim, bias=self.bias)
-
+        
         # --- Initialize
         for m in self.modules():
             self.weights_init(m)
 
     def weights_init(self, m):
         """ Initialization of linear layers """
-        if isinstance(m, nn.Linear):
-            # torch.nn.init.constant_(m.weight, 1e-4)
-            # gain = nn.init.calculate_gain('tanh')
+        if isinstance(m, nn.Linear):            
             torch.nn.init.xavier_normal_(m.weight)
-            # torch.nn.init.kaiming_normal_(m.weight, nonlinearity='relu')
-
-            # k = math.sqrt(1 / (m.weight.data.size(-1)))
-            # torch.nn.init.uniform_(m.weight, -k, k)
-            # stdv = math.sqrt(6.0 / (m.weight.data.size(-2) + m.weight.data.size(-1)))
-            # m.weight.data.uniform_(-stdv, stdv)
 
             if m.bias is not None:
                 m.bias.data.fill_(0.0)
 
-    def edge_attention(self, edges):
-        """ Compute the attention coefficients """
-        z2 = torch.cat([edges.src['z'], edges.dst['z']], dim=1)
-        a = self.attn_fc(z2)
-        a_es = self.attn_fc_es(z2)
-        a_et = self.attn_fc_et(z2)
-        return F.relu(a), F.relu(a_es), F.relu(a_et)
 
     def message_func(self, edges):
         """ Message function for the edges """
-        # start_time = time.time()
         # The batch node, will collect messages received for each node
         etype = edges._etype[1]
         
         # Get the edge features
-        # start_acces = time.time()
         f_fij = edges._edge_data['weight'][..., 0]
-        # num_edge_features = f_fij.shape[1]
-        # norm = edges._edge_data[f'norm_{etype}']  # Normalization factor, based on the symmetric adjaceny matrix
-        # end_acces = time.time() - start_acces
-
-
-        # Normalize the edge features
-        # f_fij = f_fij * norm[..., None]  #norm.unsqueeze(-1) 
-        
-        # Edge contribution normalization
-        # f_fij = f_fij / f_fij.sum(dim=1, keepdim=True)  # Worse
-        # f_fij = f_fij / num_edge_features
-        # start_edge_norm = time.time()
-        # f_fij = (f_fij * norm[..., None]) / num_edge_features
-        # time_edge_norm = time.time() - start_edge_norm
 
         if etype == 'space':
-            # planes_att = softmax_planes(f_fij)  # Plane attention coefficients
             incoming_msg = edges.src['h']
-            # node_state = edges.dst['h']
-
-            # Attraction - repulsion / force-directed networks -- we want to minimze the total force in the network f22
-            # Now, the incoming_msg is also the force directional vector, so we have diffusion + forces
-            # K = 0.5 # Natural spring length
-            # C = 1 # Relative strenght of attraction and repulsion forces
-            # p = 2 # P-controls long-range interactions, reduced by bigger p
-            # attraction_force = ((edges.src['h'] - edges.dst['h']) ** 2) / K
-            # repulsive_force = -(C * K ** (1 + p)) / ((edges.src['h'] - edges.dst['h']) ** p + 1e-3)
-            # combined_force = repulsive_force * incoming_msg + attraction_force * incoming_msg
         elif etype == 'time':
-            # planes_att = softmax_planes(f_fij)
             incoming_msg = edges.src['h_prev']
-            # incoming_msg = torch.sin(edges.src['h'] - edges.src['h_prev'])
-            # incoming_msg = edges.src['h'] - edges.src['h_prev']  # x(t) - x(t-1)
-
-            # K = 0.5 # Natural spring length
-            # C = 1 # Relative strenght of attraction and repulsion forces
-            # p = 2 # P-controls long-range interactions, reduced by bigger p
-            # attraction_force = ((edges.src['h_prev'] - edges.dst['h']) ** 2) / K
-            # repulsive_force = -(C * K ** (1 + p)) / ((edges.src['h_prev'] - edges.dst['h']) ** p + 1e-3)
-            # combined_force = repulsive_force * incoming_msg + attraction_force * incoming_msg
         else:
             raise KeyError(f"Edge type {etype} not expected")
-        
-        # start_ein = time.time()
+                
         if self.use_attention:
-            m = torch.einsum('eh,ef->eh', incoming_msg, edges._edge_data['attention'] * f_fij)  # Diffusion term - just the laplacian
+            m = torch.einsum('eh,ef->eh', incoming_msg, edges._edge_data['attention'] * f_fij)
         else:
-            m = torch.einsum('eh,ef->eh', incoming_msg, f_fij)  # Diffusion term - just the laplacian        
-        # einsum_time = time.time() - start_ein
+            m = torch.einsum('eh,ef->eh', incoming_msg, f_fij)
         
         dict_return = {
             f'm_{etype}': m,
             f"m_sum_{etype}": f_fij,
             }
-        # dict_return['e'] = e  # Attention / for the aggregation of the messages
-
-        # if etype == 'space':
-        #     pass
-        #     # m_state = torch.einsum('eh,ef->eh', node_state.squeeze(), f_fij)
-        #     # dict_return['m_state'] = m_state
-        # elif etype == 'time':
-        #     pass
-        # else:
-        #     raise KeyError(f"Edge type {etype} not expected")
-        
-        # end_time = time.time()
-        # message_time = end_time - start_time
-        # print(f"Message time: {message_time}, Einsum time: {einsum_time}, Edge norm time: {time_edge_norm}, Acces time: {end_acces}")
 
         return dict_return
 
@@ -391,141 +252,17 @@ class STGCN(nn.Module):
     def reduce_func(nodes,
                     att_factor=1.,
                     reduce_method=[partial(torch.mean, dim=1)]):
-        """ Reduction function for the received messages """
-        # THe att_factor depends on the number of time-frames that are connected 
-        # start_time = time.time()
+        """ Reduction function for the received messages """                
         m_key = list(nodes.mailbox.keys())
         res_dict = {}
-        # res_dict = {'dh_s': [], 
-        #             'dh_t': [],
-        #             'w_space': [],
-        #             'w_time': [],
-        #             # 'w_state': [],
-        #             # 'force': [],
-        #             # 'dyn': [],
-        #             }
-        
-        # if 'e' in m_key:
-        #     alpha = F.softmax(nodes.mailbox['e'], dim=1)
-        #     # alpha = nodes.mailbox['e']
-        #     m_key.remove('e')
-        # else:
-        #     alpha= None    
-
         if 'm_space' in m_key:
-            # if 'm_sum_space' in m_key:
-            # w_space = nodes.mailbox['m_sum_space']
-            # m_key.remove('m_sum_space')
-            # res_dict['w_space'] = [w_space.mean(axis=1)] # Sum of the messages that each node receives
-            res_dict['w_space'] = nodes.mailbox['m_sum_space'].mean(axis=1)
-                # Add the 'identity' term
-
-            # L = nodes.mailbox['m_space'].sum(axis=1)
-            res_dict['dh_space'] = nodes.mailbox['m_space'].sum(axis=1)
-            # res_dict['dh_s'].append(L)
+            res_dict['w_space'] = nodes.mailbox['m_sum_space'].mean(axis=1)                            
+            res_dict['dh_space'] = nodes.mailbox['m_space'].sum(axis=1)            
         elif 'm_time' in m_key:
-            # if 'm_sum_time' in m_key:
-            # w_time = nodes.mailbox['m_sum_time']
-            # m_key.remove('m_sum_time')
-            # res_dict['w_time'] = [w_time.mean(axis=1)]
-            res_dict['w_time'] = nodes.mailbox['m_sum_time'].mean(axis=1)
-            # T = nodes.mailbox['m_time'].sum(axis=1)
-            res_dict['dh_time'] = nodes.mailbox['m_time'].sum(axis=1)
-            # res_dict['dh_t'].append(T)
+            res_dict['w_time'] = nodes.mailbox['m_sum_time'].mean(axis=1)            
+            res_dict['dh_time'] = nodes.mailbox['m_time'].sum(axis=1)            
         else:
             raise KeyError(f"Message type {m_key} not expected")
-        
-        # for m in m_key:
-        #     if m == 'm_state':
-        #         continue
-        #     # print(f"Reduction function {m}")            
-        #     # HERE I APPLY THE REDUCE METHOD, TO AGGREGATE THE MESSAGES FROM THE NEIGHS.
-        #     # So, we first aggreageat the spatial / temporal message before combining it
-        #     # for method in reduce_method:
-        #     #     # Dimensions of the mailbox are: Nodes x Messages x Feature_space
-        #     #     # reduce_method[0]((alpha * nodes.mailbox['m_space']))
-        #     #     # num_planes = nodes.mailbox[f'{m}'].shape[1]
-        #     #     # if alpha is not None:
-        #     #     #     # alpha = F.softmax(nodes.mailbox['e'], dim=1)
-        #     #     #     res = method((alpha * nodes.mailbox[f'{m}']))
-        #     #     # else:
-        #     #     #     res = method(nodes.mailbox[f'{m}'])  
-
-        #     #     # if method.func == torch.max:
-        #     #     #     # It returns the max values and the indices, only interested in the max values
-        #     #     #     res = res[0]
-                                
-        #     if 'space' in m:
-        #         # This is already normalized based on the connectivity
-        #         # L = nodes.mailbox['m_space'].mean(axis=1)
-        #         L = nodes.mailbox['m_space'].sum(axis=1)
-        #         res_dict['dh_s'].append(L)
-        #         # if alpha is not None:
-        #         #     force = torch.mean((alpha * nodes.mailbox['m_force']), axis=1)
-        #         # else:
-
-        #         # Mean of energy force
-        #         # force = nodes.mailbox['m_force'].mean(axis=1)
-        #         # # force = nodes.mailbox['m_force'].sum(axis=1)
-        #         # res_dict['force'].append(force)
-
-        #         # Mean of neigh's dynamical parameters
-        #         # Dyn = nodes.mailbox['m_dyn'].sum(axis=1)
-        #         # res_dict['dyn'].append(Dyn)
-                
-        #     elif 'time' in m:
-        #         # T = nodes.mailbox['m_time'].mean(axis=1)
-        #         T = nodes.mailbox['m_time'].sum(axis=1)
-        #         res_dict['dh_t'].append(T)
-        #         # if alpha is not None:
-        #         #     force = torch.mean((alpha * nodes.mailbox['m_force']), axis=1)
-        #         # else:
-        #         #     force = nodes.mailbox['m_force'].mean(axis=1)
-        #         # res_dict['force'].append(force)
-
-        #     elif 'state' in m:
-        #         pass
-
-        #     else:
-        #         pass
-        #         # raise KeyError(f"Message type {m} not expected")
-
-        # Stack the messages
-        # if len(res_dict['dh_s']) > 0:
-        #     res_dict['dh_s'] = torch.hstack(res_dict['dh_s'])  # num_nodes x (num_reduce_methods * num_features)
-        # else:
-        #     _ = res_dict.pop('dh_s')
-        
-        # if len(res_dict['force']) > 0:
-        #     res_dict['force'] = torch.hstack(res_dict['force'])
-        # else:
-        #     _ = res_dict.pop('force')
-
-        # if len(res_dict['dyn']) > 0:
-        #     res_dict['dyn'] = torch.hstack(res_dict['dyn'])
-        # else:
-        #     _ = res_dict.pop('dyn')
-
-        # if len(res_dict['dh_t']) > 0:
-        #     res_dict['dh_t'] = torch.hstack(res_dict['dh_t'])  # num_nodes x (num_reduce_methods * num_features)
-        # else:
-        #     _ = res_dict.pop('dh_t')
-        
-        # if len(res_dict['w_space']) > 0:            
-        #     res_dict['w_space'] = torch.hstack(res_dict['w_space'])
-        #     # res_dict['w_state'] = torch.hstack(res_dict['w_state'])
-        # else:
-        #     _ = res_dict.pop('w_space')
-        #     # _ = res_dict.pop('w_state')
-        
-        # if len(res_dict['w_time']) > 0:
-        #     res_dict['w_time'] = torch.hstack(res_dict['w_time'])
-        # else:
-        #     _ = res_dict.pop('w_time')
-
-        # end_time = time.time()
-        # reduce_time = end_time - start_time
-        # print(f"Reduce time: {reduce_time}")
 
         return res_dict
 
@@ -548,31 +285,13 @@ class STGCN(nn.Module):
     def apply_node_func(self, g):
         """Apply the node function to the graph."""
 
-        # 1: Get the spatial derivative at this iteration [the laplacian]
-        # As - h [~forward difference] -- diffusion, 'smoothing' of the signal
-        # dh_s = g.ndata['dh_s'] - g.ndata['h']         
+        # 1: Get the spatial message
         dh_s = g.ndata['dh_space'] 
                 
-        # 2: Get the temporal derivative at this iteration [this is basically the derivative w.r.t to the previous time frame]      
-        # h - At [backward difference]
-        # dh_t = g.ndata['h'] - g.ndata['dh_t']
+        # 2: Get the temporal message
         dh_t = g.ndata['dh_time']
 
-        # 3: Get the regularization terms
-        # space_reg = g.ndata['w_space'].sum() / g.num_nodes()
-        # time_reg = g.ndata['w_time'].sum() / g.num_nodes()
-        space_reg = []
-        time_reg = []
-
-        # 4: Get the force of the system
-        # force = g.ndata['force']
-        force = []
-
-        # 5: Get the dynamical parameters
-        # dyn = g.ndata['dyn']
-        dyn = []
-
-        return dh_s, dh_t, space_reg, time_reg, force, dyn
+        return dh_s, dh_t
     
     def set_control(self, ctx_t, control_ctx):
         self.control_times = ctx_t
@@ -594,10 +313,7 @@ class STGCN(nn.Module):
         if use_attention:
             latent_state['space_att'] = graph['space'].edata['attention'].clone().detach()
             latent_state['time_att'] = graph['time'].edata['attention'].clone().detach()
-        if 'memory' in graph.ndata:
-            latent_state['memory'] = graph.ndata['memory'].clone().detach()
-        if 'summary_state' in graph.ndata:
-            latent_state['summary_state'] = graph.ndata['summary_state'].clone().detach()
+        
         # Store the latent states
         return latent_state
 
@@ -611,34 +327,20 @@ class STGCN(nn.Module):
         if self.use_attention:
             self.g['space'].edata['attention'] = latent_states['space_att'].clone().detach()
             self.g['time'].edata['attention'] = latent_states['time_att'].clone().detach()
-        if 'memory' in self.g.ndata:
-            self.g.ndata['memory'] = latent_states['memory'].clone().detach()            
-        if 'summary_state' in latent_states:
-            self.g.ndata['summary_state'] = latent_states['summary_state'].clone().detach()
+        
         self.t = t
         self.nfe = 1 # To avoid the initialisation of the edges
 
     def set_graph(self, g, x0, t=0):
         # x0 shape: [num_nodes * num_graphs, num_features]
-
         g = g.local_var()
-
         self.g = g
-        self.force = []
-        self.dyn_list = []
-        self.message_norms = {'m_space': [], 'm_time': []}
         self.nfe = 0
         self.t = t
-        
         self.x0 = x0.detach().clone()
-        # self.x0 = x0.clone()
-        # self.x0 = self.norm_node(x0.unsqueeze(1).clone()).squeeze()  # Layer norm
-        # self.x0 = self.norm_node(x0.unsqueeze(1)).squeeze()  # Layer norm
 
-        # self.x0 = self.norm_node(x0)  # Batch norm
-        # self.x0 = self.norm_node_data(x0.T).T
-
-        # === Since this is the same all the time
+        # ================== In case that we want to use symmetry
+        # ===> NOTE! Assume the graph is the same all the time for all subjects
         # Get the unidirectional edges
         src_edges, dst_edges, eid = g['space'].edges(form='all')
 
@@ -708,6 +410,7 @@ class STGCN(nn.Module):
         # return space_values, time_values
         return attention_space, attention_time, space_values, time_values
 
+
     def compute_penalties(self, g):
         symm_penalty = 0
         eig_penalty = 0
@@ -739,58 +442,21 @@ class STGCN(nn.Module):
 
 
     def forward(self, t, x, dt=None):
-        
-        funcs = {}  # Dictionary to store the message passing functions
-        
         if isinstance(self.norm_node, nn.InstanceNorm1d):
-            # x_transposed = x.permute(0, 2, 1)  # [Batch, Features, Nodes]
-            # x_normalized = instance_norm(x_transposed)
-            # x_normalized = x_normalized.permute(0, 2, 1)
             x = self.norm_node(x.unsqueeze(1)).squeeze()  # Instance norm
         else:
             x = self.norm_node(x) # Layer norm or any other
-        # x = self.norm_node(self.g, x).squeeze()  # Graph norm
-        # x = self.norm_node(x).squeeze() # Batch Norm
-        # x = torch.sin(x)
 
-        # x = x.clone()        
-        # x = self.norm_node(x)  # Batch norm
-        # g.ndata['h'] = self.norm_node_data(x.T).T
-
-        # Update the data
+        # Update the graph data
         g = self.g
         g.ndata['h'] = x.squeeze().float()
         if self.nfe == 0:
-            # g.ndata['h_prev'] = x.squeeze().detach().clone().float()
             g.ndata['h_prev'] = x.squeeze().clone().float()
-            # Initialize memory states
-            # g.ndata['memory'] = torch.ones((g.num_nodes(), self.memory_dim)).to(g.device)
-            # g.ndata['m_state'] = torch.zeros((g.num_nodes(), self.message_dim)).to(g.device)
-            # g.ndata['m_prev'] = torch.zeros((g.num_nodes(), self.message_dim)).to(g.device)
-            
-        # if self.nfe == 0:
-            # Be sure the spatial edges are consistent
-            # space_edges = g['space'].edata['weight'][..., 0][self.space_idx][..., None]#.unsqueeze(-1)
 
-            # g['space'].edata['weight'][self.space_idx] = space_edges
-            # # g['space'].edata['weight'][self.space_idx_comp] = g['space'].edata['weight'][self.space_idx_comp].detach()
-
-            # g['space'].edata['weight'][self.space_idx_comp] = space_edges
-            # # g['space'].edata['weight'][self.space_idx_comp] = -space_edges
-
-            # if self.use_attention:
-            #     att_space, att_time = self.compute_attention(g, t_idx=0)
-            #     # space_att = torch.zeros((g['space'].num_edges(), self.att_dim))
-            #     g['space'].edata['attention'] = torch.zeros_like(g['space'].edata['norm_space'])
-            #     g['space'].edata['attention'][self.space_idx] = att_space[..., 0]#.squeeze()
-            #     g['space'].edata['attention'][self.space_idx_comp] = att_space[..., 0]#.squeeze()
-            #     g['time'].edata['attention'] = torch.zeros_like(g['time'].edata['norm_time'])
-            #     g['time'].edata['attention'] = att_time[..., 0]#.squeeze()
-
-        t_idx = 0
         # Update the edges
         if not self.use_constant_edges and self.nfe > 0:
-            # start_time = time.time()
+            t_idx = 0  # We always use 0 since we don't store them, so it's always 0 the idx.
+
             # =========== Space
             src_edges, dst_edges = g['space'].edges()
             t_emb_edges = [t, torch.sin(t), torch.cos(t)]
@@ -807,8 +473,7 @@ class STGCN(nn.Module):
             edge_weight_space = g['space'].edata['weight'][..., t_idx]
 
             # Time
-            # frame_time_space = torch.ones_like(g.ndata['time'][...,0][src_edges[self.space_idx]]) * t
-            # frame_time_space = torch.ones_like(g.ndata['time'][...,0][src_edges]) * t
+            # frame_time_space = torch.ones_like(g.ndata['time'][...,0][src_edges[self.space_idx]]) * t            
             frame_time_space = torch.tensor(t_emb_edges, device=g.device).unsqueeze(0).repeat(g['space'].num_edges(), 1)
 
             # ============ Time 
@@ -835,24 +500,22 @@ class STGCN(nn.Module):
 
             space_edges = self.fc_space_edge(input_space_data).unsqueeze(-1)
             time_edges = self.fc_time_edge(input_time_data).unsqueeze(-1)
-            # end_time = time.time()
-            # update_edges_time = end_time - start_time
 
+            # If you want antisymmetric edges
             # g['space'].edata['weight'][self.space_idx] = space_edges
-            # # g['space'].edata['weight'][self.space_idx_comp] = -space_edges
-            # g['space'].edata['weight'][self.space_idx_comp] = space_edges
+            # g['space'].edata['weight'][self.space_idx_comp] = -space_edges        
+
             g['space'].edata['weight'] = space_edges.float()
             g['time'].edata['weight'] = time_edges.float()
-                
-        # if self.use_attention and self.nfe == 0:
+                        
         if self.use_attention:
+            # Compute attention
             attention_space, attention_time, space_values, time_values = self.compute_attention(g, t_idx=0)
             # g['space'].edata['attention'] = attention_space.float()
             # g['time'].edata['attention'] = attention_time.float()
             g['space'].edata['attention'] = space_values.float()
             g['time'].edata['attention'] = time_values.float()
-
-        if self.use_attention:
+        
             # Normalize the edges
             g['space'].edata['weight'] = (g['space'].edata['weight'] * g['space'].edata['attention'].unsqueeze(-1) * g['space'].edata['norm_space'].unsqueeze(-1).unsqueeze(-1)).float() / self.edges_intra_nf
             g['time'].edata['weight'] = (g['time'].edata['weight'] * g['time'].edata['attention'].unsqueeze(-1) * g['time'].edata['norm_time'].unsqueeze(-1).unsqueeze(-1)).float() / self.edges_inter_nf
@@ -861,48 +524,37 @@ class STGCN(nn.Module):
             g['space'].edata['weight'] = (g['space'].edata['weight'] * g['space'].edata['norm_space'].unsqueeze(-1).unsqueeze(-1)).float() / self.edges_intra_nf
             g['time'].edata['weight'] = (g['time'].edata['weight'] * g['time'].edata['norm_time'].unsqueeze(-1).unsqueeze(-1)).float() / self.edges_inter_nf
         
-        # Define the message passing functions        
+        # Define the message passing functions
+        funcs = {}  # Dictionary to store the message passing functions    
         for ix_p, p in enumerate(g.canonical_etypes):
             etype = p[1]
-            # reduce = partial(self.reduce_func, att_factor=1, reduce_method=[self._reduce_mean])
-            # funcs[f"{etype}"] = (self.message_func, reduce)
             if self.use_einsum:
+                # Here we need to use our message function
                 funcs[f"{etype}"] = (self.message_func, fn.sum(f'm_{etype}', f'dh_{etype}'))
             else:
                 if etype == 'space':
-                    funcs[f"{etype}"] = (fn.u_mul_e('h', 'weight', f'm_{etype}'), fn.sum(f'm_{etype}', f'dh_{etype}'))
-                    # funcs[f"{etype}"] = (fn.u_mul_e('m_state', 'weight', f'm_{etype}'), fn.sum(f'm_{etype}', f'dh_{etype}'))
+                    funcs[f"{etype}"] = (fn.u_mul_e('h', 'weight', f'm_{etype}'), fn.sum(f'm_{etype}', f'dh_{etype}'))                    
                 elif etype == 'time':
                     funcs[f"{etype}"] = (fn.u_mul_e('h_prev', 'weight', f'm_{etype}'), fn.sum(f'm_{etype}', f'dh_{etype}'))
-                    # funcs[f"{etype}"] = (fn.u_mul_e('m_prev', 'weight', f'm_{etype}'), fn.sum(f'm_{etype}', f'dh_{etype}'))
                 else:
                     raise KeyError(f"Edge type {etype} not expected")
                 
         # Stack: num_nodes x num_msgs x num_hidden x n_features edge ;; it stacks along the second dimension
-        # Get the spatial and temporal derivative of each node. 
-        # start_time = time.time()
+        # Get the spatial and temporal derivative of each node.        
         g.multi_update_all(funcs, self.update_fn)
-        # end_time = time.time()
-        # update_time = end_time - start_time
-
-        # start_time = time.time()
-        dh_s, dh_t, space_reg, time_reg, force, dyn = self.apply_node_func(g)
-        # end_time = time.time()
-        # apply_time = end_time - start_time
+        dh_s, dh_t = self.apply_node_func(g)
         
         # Update information in the graph, nodes and edges
         g.ndata['dh_s'] = dh_s.float()
         g.ndata['dh_t'] = dh_t.float()
-        # g.ndata['m_prev'] = g.ndata['m_state']
-        # g.ndata['m_state'] = dh_s        
 
         # Get the dt
-        # dt = t - self.t
         dt = self.dt
         self.t = t
 
         # Time 
         if self.condition_on_time:
+            # If we condition on time we use sin/cosine to compute a time-embedding
             t_emb_nodes = [t, torch.sin(t), torch.cos(t)]
             t_emb_nodes = torch.tensor(t_emb_nodes, device=g.device).unsqueeze(0).repeat(g.num_nodes(), 1)        
         else:
@@ -912,7 +564,7 @@ class STGCN(nn.Module):
             dt = torch.abs(dt)
             print("Negative time step")
         
-        # Get the scores for each layer
+        # Get the scores for each layer/edge/plane
         if self.agg_type == 'score':
             input_scores = torch.cat([g.ndata['h_dyn'][..., 0], g.ndata['h'], t_emb_nodes], dim=1)
             space_sc = self.scores_space(input_scores)
@@ -921,16 +573,6 @@ class STGCN(nn.Module):
             # Softmax the scores [edges, planes]
             space_sc = F.softmax(space_sc, dim=1)
             time_sc = F.softmax(time_sc, dim=1)
-
-        # Update the memory
-        # memory_input = torch.cat([g.ndata['memory'], g.ndata['h_dyn'][..., 0]], dim=1)
-        # balance_update = self.memory_predict(memory_input)
-        # # new_memory = g.ndata['memory'] + torch.sigmoid(g.ndata['memory']) * self.memory_update(memory_input)
-        # new_memory = self.memory_update(memory_input)
-        # g.ndata['memory'] = new_memory
-
-        # Update times
-        # start_time = time.time()
 
         # Obtain the final derivative by combining the spatial and 'temporal' derivatives
         if self.compute_derivative:
@@ -944,6 +586,7 @@ class STGCN(nn.Module):
         else:
             pass
         
+        # How to aggreagate the derivatives of the different edges/planes
         if self.use_einsum:
             pass
         else:
@@ -965,6 +608,7 @@ class STGCN(nn.Module):
                 raise KeyError(f"Aggregation type {self.agg_type} not expected")
                 
         if self.use_diffusion:
+            # Use graph diffusion to obtain the updated value
             if self.only_spatial or self.nfe == 0:
                 f = dh_s
             else:
@@ -974,128 +618,55 @@ class STGCN(nn.Module):
             if self.include_state:
                 input_data = torch.cat([g.ndata['h_dyn'][..., 0], g.ndata['h'], t_emb_nodes], dim=1)
                 f_r = self.fc_node(input_data)
-                # f = self.fc_node(torch.cat([f, g.ndata['h_dyn'].squeeze(), g.ndata['h'], self.x0], dim=1))
-                # f = self.fc_node(torch.cat([f, g.ndata['h_dyn'].squeeze(), g.ndata['h']], dim=1))
             else:
                 # pass -- First step, no reaction term
                 f_r = 0
             
             # New value
-            # f = f + balance_update * f_r 
             f = f + f_r 
         else:
-            # input_data = torch.cat([g.ndata['h_dyn'].squeeze(), g.ndata['h'], dh_s, dh_t, self.x0], dim=1)
-            # # input_data = torch.cat([g.ndata['h'], dh_s, dh_t, self.x0], dim=1)        
-            # input_data = torch.cat([g.ndata['h'], dh_s, dh_t], dim=1)
-            # input_data = torch.cat([g.ndata['h_dyn'].squeeze(), g.ndata['h'], dh_s, dh_t], dim=1)        
-            # input_data = torch.cat([g.ndata['h_dyn'].squeeze(), g.ndata['h'], g.ndata['dh_s'], g.ndata['dh_t']], dim=1)
+            # Use an MLP (combining the message passing updates and the control variable)
             input_data = torch.cat([g.ndata['h_dyn'][..., 0], g.ndata['h'], dh_s, dh_t, t_emb_nodes], dim=1)
             f = self.fc_node(input_data.float())
-
-        # Sample noise, brownian motion Weiner process -- to simulate random diffusion
-        # alpha = 0.05  # Noise factor
         
         if self.training:
+            # Brownian motion Weiner process -- to simulate random diffusion
             dW = torch.sqrt(dt) * torch.randn_like(f)  # Wiener increment
-            f = f + torch.clamp(self.noise_scale, 0.005, 0.2) * dW #.detach()
-            # f = f + (alpha * dW).detach()  # Add scaled noise
+            f = f + torch.clamp(self.noise_scale, 0.005, 0.2) * dW
         
+        # Add (or not) initial state to the update
         if self.add_source:
             f = f + self.x0.squeeze()
 
-        # if self.nfe > 0 and self.nfe % 10 == 0:
-        #     self.x0 = x.squeeze().clone()
-
-        # Update the data
-        # g.ndata['h_prev'] = x.detach().clone().float()
+        # Update the data        
         g.ndata['h_prev'] = x.clone().float()
-                
-        # Update the control
-        # closest_ctrl = torch.argmin(self.control_times - self.t)
-        # ext_ctrl = self.control_params[..., closest_ctrl]
-        # distance_to_ctrl = torch.abs(self.control_times[closest_ctrl] - self.t)
-        # distance_to_ctrl = torch.ones((g.num_nodes(), 1), device=distance_to_ctrl.device) * distance_to_ctrl
-        # # input_control = torch.cat([g.ndata['h_dyn_init'].squeeze(), ext_ctrl, distance_to_ctrl, g.ndata['h']], dim=1)
-        # input_control = torch.cat([g.ndata['h_dyn'].squeeze(), ext_ctrl, distance_to_ctrl, g.ndata['h']], dim=1)
-        # new_control = self.control_update(input_control)
-        # g.ndata['h_dyn'] = new_control.unsqueeze(-1)
 
-        # dt_step = torch.ones((g.num_nodes(), 1), device=x.device) * dt
-        # input_control = torch.cat([g.ndata['h_dyn'].squeeze(), g.ndata['h'], dt_step], dim=1)
-        # input_control = torch.cat([g.ndata['h_dyn'].squeeze(), norm_x], dim=1)
-        
-        # Laplacian of D
-        # dyn_L = g.ndata['h_dyn'].squeeze() - dyn
-
-        update_control = True
-        # dt_tensor = torch.ones((x.size(0), 1), device=x.device) * self.dt
-        if update_control:
+        # Update the control of the system  
+        if self.update_control:
             input_control = torch.cat([g.ndata['h_dyn'][..., 0], g.ndata['h'], t_emb_nodes], dim=1).float()
             new_control = self.control_update(input_control).float()
             g.ndata['h_dyn'] = new_control.unsqueeze(-1)
         else:
             input_control = torch.cat([g.ndata['h_dyn'][..., 0], g.ndata['h'], t_emb_nodes], dim=1).float()
-        # end_time = time.time()
-        # update_control_time = end_time - start_time
-
-        # print("Times: ", update_edges_time, update_time, apply_time, update_control_time)
-
-        # Project D into the sphere
-        # The dimensions should be in the last axis
-        # D = self.sphere_embed(D.permute(0, 2, 1)).permute(0, 2, 1)  
-
-        # Summarise the system state
-        if self.summarise_state:
-            if self.nfe == 0:
-                g.ndata['summary_state'] = torch.zeros_like(input_control)
-            previous_state = g.ndata['summary_state']
-            new_state = torch.tanh(self.f_summary(input_control) + self.f_previous(previous_state)) # RNN like
-            g.ndata['summary_state'] = new_state
-
-        # Store the norm of the messages
-        # self.message_norms['m_space'].append(g.ndata['dh_s'].norm())
-        # self.message_norms['m_time'].append(g.ndata['dh_t'].norm())
-
+        
         # Just to have one, and prevent crashing
         if self.nfe == 0:            
             # Compute the L1 norm of the spatial and temporal edges
-            # symm_penalty, eig_penalty, acyc_penatly = self.compute_penalties(g)
-            symm_penalty = torch.FloatTensor([0])
-            eig_penalty = torch.FloatTensor([0])
-            acyc_penatly = torch.FloatTensor([0])
-
             norm_spatial = g['space'].edata['weight'].abs().sum(dim=(1,2))
             norm_temporal = g['time'].edata['weight'].abs().sum(dim=(1,2))
-            # norm_spatial = torch.FloatTensor([0])
-            # norm_temporal = torch.FloatTensor([0])
 
             # Initialize storage tensors
-            self.force = norm_spatial.unsqueeze(0)
-            self.dyn_list = norm_temporal.unsqueeze(0)
-            self.symm_penalty = symm_penalty.unsqueeze(0)
-            self.eig_penalty = eig_penalty.unsqueeze(0)
-            self.acyc_penalty = acyc_penatly.unsqueeze(0)
+            self.norm_spatial = norm_spatial.unsqueeze(0)
+            self.norm_temporal = norm_temporal.unsqueeze(0)
         else:
-            # symm_penalty, eig_penalty, acyc_penatly = self.compute_penalties(g)
-            symm_penalty = torch.FloatTensor([0])
-            eig_penalty = torch.FloatTensor([0])
-            acyc_penatly = torch.FloatTensor([0])
-
             norm_spatial = g['space'].edata['weight'].abs().sum(dim=(1,2))
             norm_temporal = g['time'].edata['weight'].abs().sum(dim=(1,2))
-            # norm_spatial = torch.FloatTensor([0])
-            # norm_temporal = torch.FloatTensor([0])
 
             # Update tensors dynamically
-            self.force = torch.cat([self.force, norm_spatial.unsqueeze(0)])
-            self.dyn_list = torch.cat([self.dyn_list, norm_temporal.unsqueeze(0)])
-            self.symm_penalty = torch.cat([self.symm_penalty, symm_penalty.unsqueeze(0)])
-            self.eig_penalty = torch.cat([self.eig_penalty, eig_penalty.unsqueeze(0)])
-            self.acyc_penalty = torch.cat([self.acyc_penalty, acyc_penatly.unsqueeze(0)])
+            self.norm_spatial = torch.cat([self.norm_spatial, norm_spatial.unsqueeze(0)])
+            self.norm_temporal = torch.cat([self.norm_temporal, norm_temporal.unsqueeze(0)])
 
-        self.nfe = self.nfe + 1
-        if self.summarise_state:
-            self.state_summary = g.ndata['summary_state']
+        self.nfe = self.nfe + 1        
         assert f.device == next(self.parameters()).device
 
         return f.float()

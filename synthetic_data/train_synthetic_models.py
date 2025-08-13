@@ -10,11 +10,10 @@ from tqdm import tqdm  # Make sure to install tqdm (pip install tqdm)
 import multiprocessing
 multiprocessing.set_start_method("fork", force=True)
 from synthetic_data.synthetic_dataset import collate
-from utils.losses import FocalLoss, LossODEProcess
+from utils.losses import LossODEProcess
 from model.train_stmgcn_ode import Objective_Multiplex
 from utils.normalisations import compute_norm_info, MaxMin_Normalization, Ratio_Normalization, SpatialMultivariate_Normalization
 from utils.train_loop import train_model
-from dataset.dataset_utils import reshape_to_graph, reshape_to_tensor
 
 
 def batch_loop(model: torch.nn.Module,
@@ -29,27 +28,12 @@ def batch_loop(model: torch.nn.Module,
     
     # Get the logger
     logging.getLogger().setLevel(logging.INFO)
-
-    #TODO - Important!!: Need to add these stuff!!
-    # Check if external data is used or not    
-    apply_penalties = kwargs.get('apply_penalties', True)    
+    
     epoch = kwargs.get('epoch', 0)
     scaler = kwargs.get('scaler', None)
-    predict_beyond = kwargs.get('predict_beyond', False)
-    # add_graph = kwargs.get('add_graph', False)
-    # writer = kwargs.get('writer', None)
-
-    # Penalty weights
-    l1_weight = kwargs.get('l1_weight', 0.0)
-    l2_weight = kwargs.get('l2_weight', 0.0)
+    predict_beyond = kwargs.get('predict_beyond', False) # Extrapolation
     use_position = kwargs.get('use_position', False)
-    use_region = kwargs.get('use_region', False)    
-
-    # Output additional information in the test loop
-    output_probs = kwargs.get('output_probs', False)
-
-    # Re-start scores
-    num_params = sum([len(p) for p in model.parameters()])
+    use_region = kwargs.get('use_region', False)
 
     if train_model:
         model.train()
@@ -67,12 +51,9 @@ def batch_loop(model: torch.nn.Module,
     epoch_metrics = {
         'Total_loss': 0.0,
         'L_rec': 0.0,
-        'L_class': 0.0,
         'L_kl': 0.0,
-        'L_bc': 0.0,
         'L_lat': 0.0,
         'L_graph': 0.0,
-        'accuracy': 0.0,
         'mse': 0.0,
         'mae': 0.0,
         'mse_pred': 0.0,
@@ -97,21 +78,9 @@ def batch_loop(model: torch.nn.Module,
         in_time, in_node_data, in_edge_space, in_edge_time, region_id, node_predicted = batch[1]
         in_time = in_time.to(device).float()
         in_node_data = in_node_data.to(device).float()  # All node node data
-        # in_node_pos = in_node_pos.to(device)
         node_predicted = node_predicted.to(device).float()
         in_node_pos = None
-
-        # import matplotlib
-        # matplotlib.use('TkAgg')
-        # import matplotlib.pyplot as plt
-        # in_node_data_cpu = in_node_data.cpu().detach().numpy()
-
-        # ix_sample = 0
-        # ix_node = 0
-        # fig, ax = plt.subplots(1, 1)
-        # ax.plot(in_node_data_cpu[ix_sample, ix_node, 0, :])
-        # ax.plot(in_node_data_cpu[ix_sample, ix_node, 1, :])
-        # plt.show()
+        global_data = None
 
         # All edge data
         in_edge_space = in_edge_space.to(device).float()
@@ -143,12 +112,8 @@ def batch_loop(model: torch.nn.Module,
         context_pts = context_pts[0]
         target_pts = target_pts[0]
 
-        #NOTE: we use tgt_node_data because then internally we will use the context_pts to get the context data
-        global_data = None
+        #NOTE: we use tgt_node_data because then internally we will use the context_pts to get the context data        
         output = model(graph, context_pts, target_pts, in_time, in_node_data, in_edge_space, in_edge_time, rids, pos_data, global_data)
-        # if not train_model and add_graph:
-        #     input_model = (graph, context_pts, target_pts, in_time, in_node_data, in_edge_space, in_edge_time, rids, pos_data, global_data)
-        #     writer.add_graph(model, input_model)
 
         if get_latent_state:
             latent_state = output[-1]
@@ -156,13 +121,12 @@ def batch_loop(model: torch.nn.Module,
             continue
 
         if get_output:
-            # output = output + (tgt_pred, label)
             output = output + (tgt_pred, None, context_pts)
             list_outputs.append(output)
             continue
 
-        # Compute the loss
-        class_data = output[0]  # Classification ouptut
+        # === Compute the loss
+        # class_data = output[0]  # Classification ouptut
         p_y_pred = output[1]  # Reconstruction output - distribution
         latent_rec = output[2] # Latent space trajectory
         graph_reg = output[3]  # Graph regularization terms
@@ -170,7 +134,6 @@ def batch_loop(model: torch.nn.Module,
         q_context = output[5]  # Distribution of context latent space
         tgt_edge_distr = output[6]  # Distribution of target edge space
         ctx_edge_distr = output[7]  # Distribution of context edge space
-        prototypes = model.prototypes
 
         label = None
         if kwargs.get('warmup', False):
@@ -184,26 +147,17 @@ def batch_loop(model: torch.nn.Module,
             warmup = True
         else:
             weights = None
-            # weights = torch.tensor([1.0 for t in range(tgt_pred.shape[-1])], device=tgt_pred.device)
             warmup = False
-            # print("No warmup")
 
-        batch_loss, loss_components = criterion(p_y_pred, tgt_pred, class_data, label, q_target=q_target, q_context=q_context, 
+        batch_loss, loss_components = criterion(p_y_pred, tgt_pred, 
+                                                q_target=q_target, q_context=q_context, 
                                                 latent_values=latent_rec, graph_reg=graph_reg, 
-                                                tgt_edges=tgt_edge_distr, ctx_edges=ctx_edge_distr, 
-                                                only_rec=kwargs.get('training_regression', False), 
-                                                prototypes=prototypes, warmup=warmup,
-                                                weights=weights,
+                                                tgt_edges=tgt_edge_distr, ctx_edges=ctx_edge_distr,                                                 
+                                                warmup=warmup, weights=weights,
                                                 rampup_weight=kwargs.get('rampup_weight', 1.0),
                                                 )
 
-        # Penalties
-        # l1_penalty = l1_weight * sum([p.abs().sum() for p in model.parameters()]) / num_params
-        # l2_penalty = l2_weight * sum([(p ** 2).sum() for p in model.parameters()]) / num_params
-        # if apply_penalties:
-        #     batch_loss += l1_penalty + l2_penalty
-
-        # Backward and optimize
+        # ==== Backward and optimize
         if train_model:
             if scaler is not None:
                 scaler.scale(batch_loss).backward()
@@ -238,21 +192,13 @@ def batch_loop(model: torch.nn.Module,
             for key, val in loss_components.items():
                     epoch_metrics[key] += val #.item()
 
-            # Accuracy
-            predicted = None
-            accuracy = 0.
-            # _, predicted = torch.max(class_data.data, 1)
-            # correct = (predicted == label.squeeze()).sum().item()
-            # accuracy = correct / len(label.squeeze())
-            # total_acc += accuracy 
-
             # MSE
             mse = (p_y_pred.mean - tgt_pred).square().float().sum(dim=-1).mean().item()
 
             # MAE
             mae = (p_y_pred.mean - tgt_pred).abs().float().sum(dim=-1).mean().item()
 
-            epoch_metrics['accuracy'] += accuracy
+            # Save them            
             epoch_metrics['mse'] += mse
             epoch_metrics['mae'] += mae
 
@@ -261,11 +207,6 @@ def batch_loop(model: torch.nn.Module,
 
     if get_output:
         return list_outputs
-
-    if output_probs:
-        decisions = [predicted, label.squeeze()]
-        probs = class_data
-        return epoch_metrics['Total_loss'], epoch_metrics, decisions, probs
     
     if get_latent_state:
         return list_latents
@@ -597,25 +538,9 @@ class ObjectiveSynthetic(Objective_Multiplex):
         # OPTIMIZER HERE
         # =================================================================================================        
         # Optimizer
-        # Adam / AdamW / RMSprop / Rprop / ASGD
-        # optimizer = torch.optim.Adam(model.parameters(), lr=init_lr, weight_decay=weight_decay, betas=(0.9, 0.95))
-        # optimizer = torch.optim.Adam(model.parameters(), lr=init_lr, weight_decay=weight_decay)
-        optimizer = torch.optim.AdamW(model.parameters(), lr=init_lr, weight_decay=weight_decay, amsgrad=False, eps=1e-8, betas=(0.9, 0.999))
-        # optimizer = torch.optim.RMSprop(model.parameters(), lr=init_lr, alpha=0.99)
-
-        # Scheduler
-        # scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9)
-        # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 100, gamma=0.5, last_epoch=-1)
-
-        # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min',
-        #                                                         factor=params.get('lr_reduce_factor', 0.4),
-        #                                                         patience=params.get('lr_schedule_patience', 10),
-        #                                                         threshold=params.get('lr_schedule_threshold', 1e-4),
-        #                                                         min_lr=params.get('lr_min', 1e-6),
-        #                                                         )
-        
+        optimizer = torch.optim.AdamW(model.parameters(), lr=init_lr, weight_decay=weight_decay, amsgrad=False, eps=1e-8, betas=(0.9, 0.999))        
+                
         # Scheduler with early cut-off factor of 1.15
-        # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=int((num_epochs-100) * 1.15), eta_min=1e-5)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=10, factor=0.5, min_lr=1e-5)
 
         # Datasets
@@ -634,12 +559,13 @@ class ObjectiveSynthetic(Objective_Multiplex):
             test_dataset = None
 
         # Graph data loader
+        #TODO
         # total_cpus = multiprocessing.cpu_count()
         total_cpus = self.num_jobs * 2  # It seems that in SLURM the number of CPUs is not reliable usng mp.cpu_count()
         num_workers_per_dataloader = max(1, (total_cpus // self.num_jobs) // 4)  # Balance CPU usage
-        drop_last = False if batch_size >= len(train_dataset) else True
-        # drop_last = False
+        drop_last = False if batch_size >= len(train_dataset) else True        
         pin_memory = True if self.device == 'cuda' else False
+
         train_dataloader = DataLoader(train_dataset, collate_fn=collate, batch_size=batch_size, shuffle=True, drop_last=drop_last, sampler=None,
                                       prefetch_factor=4, num_workers=num_workers_per_dataloader, pin_memory=pin_memory, persistent_workers=True)
         if valid_dataset is not None:

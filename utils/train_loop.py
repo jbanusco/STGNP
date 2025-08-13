@@ -1,7 +1,6 @@
 import os
 import numpy as np
 import matplotlib.pyplot as plt
-import copy
 import torch
 from torch.utils.data import DataLoader
 
@@ -12,7 +11,7 @@ import logging
 # import wandb
 from torch.utils.tensorboard import SummaryWriter
 
-from baselines.train_utils import load_checkpoint, save_checkpoint
+from utils.train_utils import load_checkpoint, save_checkpoint
 from utils.plot_utils import save_mean_trajectories, plot_latent_trajectories, fig_to_tensorboard
 
 
@@ -202,8 +201,6 @@ def train_model(model: torch.nn.Module,
     # ===========================================
     # ============== Setup options ==============
     if scheduler is None:
-        # decay_rate = 0.95
-        # scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer=optimizer, gamma=decay_rate)
         lr_reduce_factor = 0.6
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=lr_reduce_factor, patience=lr_schedule_patience)
 
@@ -260,10 +257,6 @@ def train_model(model: torch.nn.Module,
         losses_valid = torch.zeros(epochs, device='cpu')
         losses_test = torch.zeros(epochs, device='cpu')
 
-        # track_metrics_train = {'accuracy': [], 'mse': []}
-        # track_metrics_test = {'accuracy': [], 'mse': []}
-        # track_metrics_valid = {'accuracy': [], 'mse': []}
-
         track_metrics_train = {
             'accuracy': torch.zeros(epochs, device='cpu'),
             'mse': torch.zeros(epochs, device='cpu')
@@ -277,25 +270,15 @@ def train_model(model: torch.nn.Module,
             'mse': torch.zeros(epochs, device='cpu')
         }
         
-    failed = False
-    training_regression = None  # Start by the regression
     # ===========================================
     # ================== Train ==================
-    kwargs['apply_penalties'] = False
-    # if kwargs.get('multiplex', True):        
-    #     update_encoding_state(model, state=training_regression)
-    #     update_decoder_state(model, state=training_regression)
-    #     update_multiplex_state(model, state=training_regression)
-    #     update_classifier_state(model, state=not training_regression)  # Don't train the classifier
-    
-    # Create the GradScaler outside of the epoch loop
-    # scaler = torch.amp.GradScaler(device=device)
-    scaler = None
-    kwargs['scaler'] = scaler
-    warmup_epochs = kwargs.get('warmup_epochs', 20)
     ramp_epochs = 20
+    failed = False
+    kwargs['apply_penalties'] = False
+    kwargs['scaler'] = None
+    warmup_epochs = kwargs.get('warmup_epochs', 20)
+    
     for epoch in range(init_epoch, epochs):        
-        # if epoch > int(epochs/6): # and kwargs.get('multiplex', True):  # Warm-up for the first epochs        
         if epoch > warmup_epochs:
             kwargs['apply_penalties'] = True
             kwargs['warmup'] = False
@@ -311,33 +294,7 @@ def train_model(model: torch.nn.Module,
         else:
             kwargs['warmup'] = True
             rampup_weight = 1.0  # No ramp-up during warmup
-        kwargs['rampup_weight'] = rampup_weight
-        # if epoch == init_epoch and track_experiment:
-        #     kwargs['add_graph'] = True
-        #     kwargs['writer'] = writer
-        # else:
-        #     kwargs['add_graph'] = False
-
-        #     update_classifier_state(model, state=True)  # Train the classifier
-        #     training_regression = None  # Stop training just the regression
-
-        # if epoch > int(epochs/4) and epoch % 20 == 0 and kwargs.get('multiplex', True):
-        #     training_regression = not training_regression
-        #     # update_encoding_state(model, state=training_regression)
-        #     # update_decoder_state(model, state=training_regression)
-        #     # update_multiplex_state(model, state=training_regression)
-        #     # update_classifier_state(model, state=not training_regression)
-        #     update_classifier_state(model, state=True)
-        #     training_regression = None
-
-        # if (epoch > int(epochs*0.9)) and kwargs.get('multiplex', True):
-        #     update_encoding_state(model, state=True)
-        #     update_decoder_state(model, state=True)
-        #     update_multiplex_state(model, state=True)
-        #     update_classifier_state(model, state=True)
-        #     training_regression = None
-
-        kwargs['training_regression'] = training_regression
+        kwargs['rampup_weight'] = rampup_weight        
         kwargs['epoch'] = epoch
 
         # ====================
@@ -367,19 +324,16 @@ def train_model(model: torch.nn.Module,
                                                                                 device, train_model=False, **kwargs)
 
             # Compute score (for hyperparameter tuning) and model saving
-            # score = -np.log(metrics_val['mse'])
-            # score = -np.log(metrics_val['mse_pred'])
             score = -np.log(metrics_val['mae_pred'])
-            # score = -np.log(metrics_val['mae_pred']) + metrics_val['accuracy'] * 0.5
+            
         else:
             output_val = None
             outout_pred_val = None
-            loss_val = np.nan
+            loss_val = np.nan            
             metrics_val = {'accuracy': np.nan, 'mse': np.nan}
-            # score = -np.log(metrics_train['mse'])
-            # score = -np.log(metrics_train['mse_pred'])
+
+            # Compute score (for hyperparameter tuning) and model saving
             score = -np.log(metrics_train['mae_pred'])
-            # score = -np.log(metrics_train['mae_pred']) + metrics_train['accuracy'] * 0.5
             
         with torch.no_grad():
             if not kwargs.get('warmup', False):
@@ -388,8 +342,6 @@ def train_model(model: torch.nn.Module,
                     scheduler.step(loss_val)
                 else:
                     scheduler.step()
-                # scheduler.step(loss_val)
-                # scheduler.step(loss_train)
 
         # ===================
         # ===== Testing =====
@@ -406,16 +358,16 @@ def train_model(model: torch.nn.Module,
         # ================================================================
         # =================== Log and save tmp files =====================
         with torch.no_grad():
-            losses_train[epoch] = loss_train #.cpu()
-            losses_valid[epoch] = loss_val #.cpu()
-            losses_test[epoch] = loss_test #.cpu()
-            track_metrics_train['accuracy'][epoch] = metrics_train['accuracy'] #.cpu()
-            track_metrics_valid['accuracy'][epoch] = metrics_val['accuracy'] #.cpu()
-            track_metrics_test['accuracy'][epoch] = metrics_test['accuracy'] #.cpu()
+            losses_train[epoch] = loss_train
+            losses_valid[epoch] = loss_val
+            losses_test[epoch] = loss_test
+            track_metrics_train['accuracy'][epoch] = metrics_train['accuracy']
+            track_metrics_valid['accuracy'][epoch] = metrics_val['accuracy']
+            track_metrics_test['accuracy'][epoch] = metrics_test['accuracy']
             if 'mse' in metrics_train:
-                track_metrics_train['mse'][epoch] = metrics_train['mse'] #.cpu()
-                track_metrics_valid['mse'][epoch] = metrics_val['mse'] #.cpu()
-                track_metrics_test['mse'][epoch] = metrics_test['mse'] #.cpu()
+                track_metrics_train['mse'][epoch] = metrics_train['mse']
+                track_metrics_valid['mse'][epoch] = metrics_val['mse']
+                track_metrics_test['mse'][epoch] = metrics_test['mse']
 
         acc_train = track_metrics_train['accuracy'][epoch]
         acc_valid = track_metrics_valid['accuracy'][epoch]
@@ -491,7 +443,8 @@ def train_model(model: torch.nn.Module,
             if best_score == score and losses_valid[-1] > losses_valid[best_epoch]:
                 save_best_model = False
             if epoch < int(warmup_epochs):
-                save_best_model = False  # Wait a bit...
+                # Wait until the warmup is over
+                save_best_model = False  
 
             if save_best_model:                            
                 # Save temporary best model       
