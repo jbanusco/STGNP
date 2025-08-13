@@ -12,7 +12,6 @@ from scipy.integrate import odeint
 from synthetic_data.synthetic_dataset import SyntheticDataset
 from scipy.spatial.distance import pdist, squareform
 
-from model.train_stmgcn_ode import build_model_multiplex
 from synthetic_data.train_synthetic_models import ObjectiveSynthetic, batch_loop
 from utils.model_selection_sklearn import stratified_split
 from utils.utils import seed_everything, str2bool, get_best_params
@@ -360,14 +359,6 @@ class PendulumDataset(SyntheticDataset):
 def get_parser():
     # By default
     paper_folder = "/media/jaume/DATA/Data/Multiplex_Synthetic_FINAL"
-    # paper_folder = "/usr/data/Multiplex_Synthetic_FINAL"
-    # study_name = "Multiplex_CoupledPendulum"
-    # study_name = "Multiplex_CoupledPendulum_ADAM"
-    # study_name = "Multiplex_CoupledPendulum_ADAM_FINAL_MAE"
-    # study_name = "Multiplex_CoupledPendulum_ADAM_END"
-    # study_name = "Multiplex_CoupledPendulum_Pred_ADAM"
-    # study_name = "Multiplex_CoupledPendulum_Pred"
-    # study_name = "Multiplex_CoupledPendulum_DIMENSIONS"
     study_name = "Multiplex_CoupledPendulum_DIMENSIONS_NEW_LOSS"
 
     parser = argparse.ArgumentParser(description='Coupled Pendulum')
@@ -416,8 +407,6 @@ def get_parser():
     parser.add_argument('--num_jobs', type=int, default=0, help='Number of jobs in parallel')
 
     parser.add_argument('--gamma_rec', type=float, default=2, help='Weight for the regression loss')
-    parser.add_argument('--gamma_class', type=float, default=0., help='Weight for the classification loss')
-    parser.add_argument('--gamma_bc', type=float, default=0., help='Weight for the boundary condition in the latent space')
     parser.add_argument('--gamma_lat', type=float, default=0.1, help='L2 weight for the latent space')
     parser.add_argument('--gamma_graph', type=float, default=0.1, help='Weight for the graph regularization')
 
@@ -451,16 +440,8 @@ def main():
     # Options
     normalization = args.normalization
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    # device = "cpu"
-
-    # coupled_pendulum = CoupledPendulum(num_pendulum=2, k=2)
-    # generate_data(coupled_pendulum, num_samples=500, length=10,
-    #               dt=0.1,num_nodes=2, space_coupling=0.1, time_coupling=0.1, save_folder=save_folder)
     
     is_optuna = args.is_optuna
-    # if is_optuna:
-    #     num_samples = 500   # Just for the hyper-parameter tuning, otherwise takes too long.
-    # else:
     num_samples = args.num_samples
 
     # Create the dataset
@@ -495,9 +476,7 @@ def main():
 
     # Loss weights
     gamma_rec = args.gamma_rec  # Regression
-    gamma_class = args.gamma_class  # Classification
     gamma_lat = args.gamma_lat  # Latent space
-    gamma_bc = args.gamma_bc  # Boundary condition
     gamma_graph = args.gamma_graph  # Graph regularization
     
     use_region_id = False
@@ -518,9 +497,7 @@ def main():
                       'use_attention': use_attention,
                       'use_constant_edges': use_constant_edges,
                       'gamma_rec': gamma_rec,
-                      'gamma_class': gamma_class,
                       'gamma_lat': gamma_lat,
-                      'gamma_bc': gamma_bc,
                       'gamma_graph': gamma_graph,
                       'use_region': use_region_id,
                       'decode_just_latent': decode_just_latent,
@@ -552,7 +529,6 @@ def main():
                                           use_region_id=use_region_id,
                                           use_time=use_time,
                                           fn_batch_loop=batch_loop,
-                                          class_dim=0,
                                           space_planes=args.space_planes,
                                           time_planes=args.time_planes,
                                           depth_nodes=1,
@@ -596,16 +572,8 @@ def main():
         df_params = pd.read_csv(df_params_path)
         df_params.dropna(how='any', inplace=True)
         df_params = df_params.sort_values(by='value', ascending=False)
-        # params_names = [key for key in df_params.columns if key.startswith('params_')]
-        # best_params = df_params.iloc[0].to_dict()   
-        # # best_params = df_params.iloc[0:5][params_names].mean().to_dict()
-        # best_params = {key.replace('params_', ''): value for key, value in best_params.items() if key.startswith('params_')}
         best_params = get_best_params(df_params.iloc[0:5], use_median=True)
-        # --- VERY VERY GOOD + depth 1
-        best_params['hidden_dim'] = 17
-        # best_params['latent_dim'] = 6
-
-        # best_params = {'gamma_lat': 0.37, 'gamma_rec': 0.93, 'gamma_graph': 0.04, 'weight_decay': 0.00017}
+        best_params['hidden_dim'] = 17        
         print(f"Best parameters: {best_params}")
 
         model_params = objective_optuna.default_params.copy()
@@ -669,18 +637,9 @@ def main():
 
     if sq_database or run_best or not is_optuna:
         steps_to_predict = int(duration/dt)
-        # steps_to_predict = int(duration / dt_step_size)
-        # print(steps_to_predict)
-        # time_to_predict = np.arange(0, steps_to_predict, 1)  # Predict 100 steps more
         time_to_predict = torch.arange(0, steps_to_predict, 1)
         pred_trajectory, pred_latent, tgt_trajectory = objective_optuna.predict_from_latent(model, objective_optuna.dataset, time_to_predict, model_params, device=device)
         # The shape of the results is [num_samples, num_features, num_nodes, num_time_steps]
-
-        
-        # Save as metric the error in the predicted trajectory
-        total_mse = (tgt_trajectory - pred_trajectory.mean[..., 1:]).square().mean(dim=0).sum()
-        df_mse = pd.DataFrame({'MSE': [total_mse.item()]})
-        df_mse.to_csv(os.path.join(save_folder, 'mse.csv'))
         
         # Per feature
         df_errors = get_data_in_original_scale(model, objective_optuna, model_params, save_folder, pred_trajectory, 

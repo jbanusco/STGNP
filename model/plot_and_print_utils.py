@@ -716,23 +716,16 @@ def get_model_results(trained_model, objective, params_model, save_path, fts_to_
     output = objective.get_output_of_model(trained_model, objective.dataset, None, None, n_samples=n_samples, params=params_model)
     # labels_tmp = objective.dataset.label
 
-    class_data = output[0]  # Classification ouptut    
-    rec_ft = output[1]  # Reconstruction output - mean
-    rec_std = output[2]  # Reconstruction output - std
-    latent_rec_plot = output[3] # Latent space trajectorys
-    q_context = output[4]
-    force = output[5]  # Force of the system    
-    # if objective.class_dim > 0:
-    #     tgt_data = output[-2]
-    #     labels = output[-1].to('cpu')
-    # else:
+    # (rec_ft, rec_std, latent_rec, q_context, graph_reg, tgt_data, tgt_label, context_pts)    
+    rec_ft = output[0]  # Reconstruction output - mean
+    rec_std = output[1]  # Reconstruction output - std
+    latent_rec_plot = output[2] # Latent space trajectorys
+    q_context = output[3]
+    graph_reg = output[4]  # Graph regularisation
+
     tgt_data = output[-3]
     labels = output[-2]
     context_pts = output[-1]
-    if objective.class_dim == 0 or labels is None:
-        labels = torch.ones((rec_ft.shape[0], 1))
-    else:
-        labels = labels.to('cpu')
     
     # Transform back target and predictions
     rec_data = rec_ft.detach().cpu()
@@ -828,25 +821,9 @@ def get_model_results(trained_model, objective, params_model, save_path, fts_to_
         # Need to implement the spatial normalization
         pass
 
-    train_idx = objective.train_idx
-    valid_idx = objective.valid_idx
-    test_idx = objective.test_idx
-
-    if objective.class_dim > 0:
-        # ==== Plot the confusion matrix ==== 
-        # Rows: true classes
-        # Columns: predicted classes
-        # -- Get accuracy
+    if "Group" in objective.dataset.global_data:
         dict_labels = objective.dataset.global_data[['Group', 'Group_Cat']].dropna().drop_duplicates().set_index('Group_Cat').to_dict()['Group']    
-        acc_train, acc_valid, acc_test = get_accuracies(class_data, labels, train_idx, valid_idx, test_idx,
-                                                        store_confusion=False, dict_labels=dict_labels, save_path=save_path)
-        # print(f"Train accuracy: {acc_train}")
-        # print(f"Valid accuracy: {acc_valid}")
-        # print(f"Test accuracy: {acc_test}")
-
-        predictions = class_data.argmax(dim=1).cpu().numpy()
     else:
-        predictions = labels.clone().cpu().numpy()
         dict_labels = None
 
     init_params = q_context.mean.float().cpu().detach().numpy()
@@ -880,7 +857,6 @@ def get_model_results(trained_model, objective, params_model, save_path, fts_to_
 
     # 5 == Predictions and labels
     final_data['labels'] = labels  # [B,]
-    final_data['predictions'] = predictions  # [B,]
     final_data['subject_ids'] = np.array(objective.dataset.sub_id)  # [B,]
     final_data['dict_labels'] = dict_labels
 
@@ -1052,7 +1028,6 @@ def plot_combined_trajectories(trained_model, objective, params_model, save_path
 
     # Labels
     labels = model_data['labels']
-    predictions = model_data['predictions']
     dict_labels = model_data['dict_labels']
 
     # Indices
@@ -1243,7 +1218,6 @@ def get_data_in_original_scale(trained_model, objective, params_model, save_path
 
     # Labels
     labels = model_data['labels']
-    predictions = model_data['predictions']
     dict_labels = model_data['dict_labels']
 
     # Indices
@@ -1426,7 +1400,6 @@ def plot_results(trained_model, objective, params_model, save_path, plot_individ
 
     # Labels
     labels = model_data['labels']
-    predictions = model_data['predictions']
     dict_labels = model_data['dict_labels']
 
     # ==== Plot latent space trajectories
@@ -1448,12 +1421,13 @@ def plot_results(trained_model, objective, params_model, save_path, plot_individ
     # ax[1].plot(init_points.mean(axis=0)); ax[1].set_title('Initial')
     fig.savefig(os.path.join(save_path, f'initial_values_and_params.{save_format}'), bbox_inches='tight', dpi=300)
 
-    # ==== Plot the latent space    
-    predictions_test = predictions[test_idx]
+    # ==== Plot the latent space
+    if labels is None:
+        labels = torch.ones((latent_trajectories.shape[0], 1))
     labels_test = labels[test_idx]
     try:
-        plot_latent_space(latent_trajectories, labels, predictions, os.path.join(save_path, f'latent_space.{save_format}'))        
-        plot_latent_space(latent_trajectories[test_idx, :], labels_test, predictions_test, os.path.join(save_path, f'latent_space_test.{save_format}'))
+        plot_latent_space(latent_trajectories, labels, os.path.join(save_path, f'latent_space.{save_format}'))        
+        plot_latent_space(latent_trajectories[test_idx, :], labels_test, os.path.join(save_path, f'latent_space_test.{save_format}'))
     except Exception as e:
         print(f"Error in the latent space: {e}")
         pass
@@ -1500,8 +1474,8 @@ def plot_results(trained_model, objective, params_model, save_path, plot_individ
             A = np.ones((int(objective.dataset.num_nodes**0.5), int(objective.dataset.num_nodes**0.5)))
             plot_state(rec_trajectories, A, save_path_fig, dim_state=0, x_tgt=tgt_trajectories, frames_idx=plotted_frames, subj_idx=0)
 
-    if objective.class_dim > 0:
-        unique_labels = np.unique(labels)
+    unique_labels = np.unique(labels)
+    if len(unique_labels) > 1:
         for label in unique_labels:
             idx = np.where(labels == label)[0]
             save_folder = os.path.join(save_path, f'{dict_labels[label]}')

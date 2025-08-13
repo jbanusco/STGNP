@@ -49,7 +49,7 @@ def plot_confusion_matrx(labels, predictions, dict_labels, save_filename, name='
     df_conf_train.to_csv(save_filename)
 
 
-def plot_latent_space(latent_space, labels, predictions, save_filename):
+def plot_latent_space(latent_space, labels, save_filename, predictions=None):
     num_samples = latent_space.shape[0]
 
     logging.info("Computing the latent space...")
@@ -63,12 +63,12 @@ def plot_latent_space(latent_space, labels, predictions, save_filename):
     latent_tsne = tsne.fit_transform(latent_vectors)
     logging.info("Latent space computed!")
 
-    # Labels for colors            
+    # Labels for colors       
     all_labels = labels.squeeze().cpu().numpy()
 
     # Identify misclassified points
-    misclassified_indices = np.where(all_labels != predictions)[0]
-    correct_indices = np.where(all_labels == predictions)[0]
+    # misclassified_indices = np.where(all_labels != predictions)[0]
+    # correct_indices = np.where(all_labels == predictions)[0]
 
     # assuming you have a numpy array of labels called `labels`
     logging.info("Plotting the latent space...")

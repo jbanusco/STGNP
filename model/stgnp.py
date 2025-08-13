@@ -28,7 +28,6 @@ class STGNP(nn.Module):
                  hidden_dim: int,
                  latent_dim: int,
                  out_dim: int,
-                 class_dim: int,
                  num_regions: int,
                  space_planes: int = 1,
                  time_planes: int = 1,
@@ -74,7 +73,6 @@ class STGNP(nn.Module):
         self.out_dim = out_dim  # Output node feaure dimensions
         self.hidden_dim = hidden_dim  # Hidden dimensions of the node features
         self.latent_dim = latent_dim  # Dimensions of the latent dynamical space
-        self.class_dim = class_dim  # Number of classes into which classify the data
         assert self.latent_dim > 0, "The latent dimension must be greater than 0"
         assert self.latent_dim < self.hidden_dim, "The latent dimension must be smaller than the hidden dimension"
         self.dyn_params = self.hidden_dim - latent_dim  # Number of fixed dimensions; control params of the dynamical system
@@ -85,7 +83,6 @@ class STGNP(nn.Module):
         self.external_dim = external_dim  # External dimensions -- for the global data, not graph-based
         hidden_dim_ext = hidden_dim_ext if self.external_dim > 0 else 0  # Hidden dimensions for non-graph data
         self.hidden_dim_ext = hidden_dim_ext  # Hidden dimensions for non-graph data
-        self.class_dim = class_dim  # Number of classes into which classify the data
         self.intra_edges_dim = edge_intra_dim  # Intra-plane edges feature dimensions
         self.inter_edges_dim = edge_inter_dim  # Inter-plane edges feature dimensions
 
@@ -466,7 +463,7 @@ class STGNP(nn.Module):
         # Same for the edges: [batch_size, num_edge_fts, num_edges, num_times]        
         with graph.local_scope():            
             # Use the encoder internally to get the representation of both control and initial points            
-            mu_context, sigma_context, mu_space, sigma_space, mu_time, sigma_time, g_data, control_ctx = self.xy_to_mu_sigma(context_pts, in_time, in_node_data, in_edge_space, in_edge_time, global_data, rids, pos_data)
+            mu_context, sigma_context, mu_space, sigma_space, mu_time, sigma_time, g_data = self.xy_to_mu_sigma(context_pts, in_time, in_node_data, in_edge_space, in_edge_time, global_data, rids, pos_data)            
 
             # Get the distribution for the space and time edges
             q_space_ctx = Normal(mu_space, sigma_space)
@@ -481,7 +478,7 @@ class STGNP(nn.Module):
             if self.training:
                 # Encode target 
                 # Context needs to be encoded to calculate KL term
-                mu_target, sigma_target, mu_space_tgt, sigma_space_tgt, mu_time_tgt, sigma_time_tgt, g_data, control_tgt = self.xy_to_mu_sigma(target_pts, in_time, in_node_data, in_edge_space, in_edge_time, global_data, rids, pos_data)
+                mu_target, sigma_target, mu_space_tgt, sigma_space_tgt, mu_time_tgt, sigma_time_tgt, g_data = self.xy_to_mu_sigma(target_pts, in_time, in_node_data, in_edge_space, in_edge_time, global_data, rids, pos_data)
 
                 q_space_tgt = Normal(mu_space_tgt, sigma_space_tgt)
                 q_time_tgt = Normal(mu_time_tgt, sigma_time_tgt)
@@ -501,12 +498,12 @@ class STGNP(nn.Module):
                 # Get z                
                 tgt_time = in_time[..., target_pts]
                 ctx_time = in_time[..., context_pts]
-                latent = self.integrate_ode(graph, ctx_time, tgt_time, z_sample, space_edge_sample, time_edge_sample, rids, control_tgt)
+                latent = self.integrate_ode(graph, ctx_time, tgt_time, z_sample, space_edge_sample, time_edge_sample, rids)
                 latent = reshape_to_tensor(latent.permute(1, 2, 0), graph.batch_size).float()
 
                 # Graph norm data
-                spatial_norm = self.stgcn.spatial_norm.float()
-                temporal_norm = self.stgcn.temporal_norm.float()
+                spatial_norm = self.stgcn.norm_spatial.float()
+                temporal_norm = self.stgcn.norm_temporal.float()
 
                 # Get parameters of output distribution                
                 p_y_pred = self.xz_to_y(tgt_time, z_sample, latent, g_ndata=g_data, rids=rids, pos_data=pos_data)
@@ -518,28 +515,27 @@ class STGNP(nn.Module):
                 return p_y_pred, latent, (spatial_norm, temporal_norm), q_target, q_context,(q_space_tgt, q_time_tgt), (q_space_ctx, q_time_ctx), latent_state
             else:
                 # Sample from distribution based on context
-                z_sample = q_context.rsample()
-                space_edge_sample = q_space_ctx.rsample()
-                time_edge_sample = q_time_ctx.rsample()
+                # z_sample = q_context.rsample()
+                # space_edge_sample = q_space_ctx.rsample()
+                # time_edge_sample = q_time_ctx.rsample()
 
                 # Get z and force
                 tgt_time = in_time[..., target_pts]
                 ctx_time = in_time[..., context_pts]
 
                 # latent = self.integrate_ode(graph, ctx_time, tgt_time, z_sample, space_edge_data, time_edge_data)
-                latent = self.integrate_ode(graph, ctx_time, tgt_time, mu_context, mu_space, mu_time, rids, control_ctx)
+                latent = self.integrate_ode(graph, ctx_time, tgt_time, mu_context, mu_space, mu_time, rids)
                 latent = reshape_to_tensor(latent.permute(1, 2, 0), graph.batch_size).float()
 
                 # Predict target points based on context
                 p_y_pred = self.xz_to_y(tgt_time, mu_context, latent, g_ndata=g_data, rids=rids, pos_data=pos_data)
 
                 # Graph norm data
-                spatial_norm = self.stgcn.spatial_norm.float()
-                temporal_norm = self.stgcn.temporal_norm.float()                
+                spatial_norm = self.stgcn.norm_spatial.float()
+                temporal_norm = self.stgcn.norm_temporal.float()                
 
                 # Get the last latent state - for future prediction
                 latent_state = self.stgcn.get_latent_state(self.stgcn.g, self.use_attention)
                 latent_state['l_end'] = reshape_to_graph(latent[...,[-1]].clone().detach()).float()
 
                 return p_y_pred, latent, (spatial_norm, temporal_norm), None, q_context, (None, None, None), (q_space_ctx, q_time_ctx), latent_state
-

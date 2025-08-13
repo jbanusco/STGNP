@@ -3,8 +3,6 @@ import copy
 import numpy as np
 import logging
 import torch
-import gc
-import time
 import optuna
 import multiprocessing
 multiprocessing.set_start_method("fork", force=True)
@@ -16,16 +14,14 @@ from torch.utils.tensorboard import SummaryWriter
 from dataset.dataset_utils import collate
 from model.stgnp import STGNP
 from utils.train_loop import train_model
-from utils.losses import FocalLoss, LossODEProcess
-from utils.normalisations import MaxMin_Normalization, Ratio_Normalization, ClampTensor, SpatialMultivariate_Normalization, compute_norm_info
-# from model.adopt import ADPOT
+from utils.losses import LossODEProcess
+from utils.normalisations import MaxMin_Normalization, Ratio_Normalization, SpatialMultivariate_Normalization, compute_norm_info
 
 
 # Build neural network model
 def build_model_multiplex(params, 
                           in_features, 
-                          out_dim, 
-                          class_dim, 
+                          out_dim,
                           num_regions,
                           edge_inter_dim=0,
                           edge_intra_dim=0,
@@ -69,8 +65,7 @@ def build_model_multiplex(params,
         in_features, 
         hidden_dim, 
         latent_dim,
-        out_dim, 
-        class_dim,
+        out_dim,
         num_regions,
         space_planes=space_planes,
         time_planes=time_planes,
@@ -366,8 +361,6 @@ class Objective_Multiplex(object):
                  use_region_id=False,
                  use_time=False,
                  use_weighted_sampler=False,
-                 use_focal_loss=False,
-                 class_dim=5,
                  space_planes=1,
                  time_planes=1,
                  only_spatial=False,
@@ -401,7 +394,6 @@ class Objective_Multiplex(object):
         self.norm_by_group = norm_by_group
         self.norm_only_ed = norm_only_ed
         self.use_weighted_sampler = use_weighted_sampler
-        self.use_focal_loss = use_focal_loss
         self.classify = classify
         self.predict_external = predict_external
 
@@ -410,7 +402,6 @@ class Objective_Multiplex(object):
         self.use_region = use_region_id
         self.use_norm = use_norm
         self.use_time = use_time
-        self.class_dim = class_dim
         self.space_planes = space_planes
         self.time_planes = time_planes
         self.depth_nodes = depth_nodes
@@ -478,8 +469,6 @@ class Objective_Multiplex(object):
             'use_constant_edges': False,
             'gamma_rec': 1,
             'gamma_lat': 0,
-            'gamma_bc': 0,
-            'gamma_class': 0,
             'gamma_graph': 0,
             'decode_just_latent': False,
             'space_planes': self.space_planes,
@@ -491,7 +480,6 @@ class Objective_Multiplex(object):
             'use_time': self.use_time,
             'use_hdyn': True,
             'cond_on_time': True,
-            'gamma_focal': 1,
             'weight_classes': None,
             'dt_step': 0.1,
             'only_spatial': self.only_spatial,
@@ -721,17 +709,13 @@ class Objective_Multiplex(object):
             
             gamma_rec = params.get('gamma_rec', 1)
             gamma_lat = params.get('gamma_lat', 0)
-            gamma_class = params.get('gamma_class', 0)
-            gamma_bc = params.get('gamma_bc', 0)
             gamma_graph = params.get('gamma_graph', 0)
-            weight_classes = params.get('weight_classes', None)
-            gamma_focal = params.get('gamma_focal', 0)
+            weight_classes = params.get('weight_classes', None)            
             loss_function = LossODEProcess(gamma_rec=gamma_rec, 
-                                           gamma_lat=gamma_lat, 
-                                           gamma_class=gamma_class, 
-                                           gamma_bc=gamma_bc, 
+                                           gamma_lat=gamma_lat,
                                            gamma_graph=gamma_graph,
-                                           weight_classes=weight_classes, gamma_focal=gamma_focal, use_mse=False)
+                                           weight_classes=weight_classes,
+                                           use_mse=False)
             
             # Try getting multiple outputs at different frames
             if n_samples > 1:
@@ -802,8 +786,7 @@ class Objective_Multiplex(object):
         """Build the model"""
         return build_model_multiplex(params, 
                                      self.in_node_dim, 
-                                     self.out_dim, 
-                                     self.class_dim, 
+                                     self.out_dim,
                                      self.num_regions,
                                      edge_inter_dim=self.edge_inter_dim,
                                      edge_intra_dim=self.edge_intra_dim,
@@ -824,17 +807,13 @@ class Objective_Multiplex(object):
         # Criterion
         gamma_rec = params.get('gamma_rec', 0)
         gamma_lat = params.get('gamma_lat', 0)
-        gamma_class = params.get('gamma_class', 0)
-        gamma_bc = params.get('gamma_bc', 0)
         gamma_graph = params.get('gamma_graph', 0)
-        weight_classes = params.get('weight_classes', None)
-        gamma_focal = params.get('gamma_focal', 0)
+        weight_classes = params.get('weight_classes', None)        
         loss_function = LossODEProcess(gamma_rec=gamma_rec, 
-                                       gamma_lat=gamma_lat, 
-                                       gamma_class=gamma_class, 
-                                       gamma_bc=gamma_bc, 
+                                       gamma_lat=gamma_lat,
                                        gamma_graph=gamma_graph,
-                                       weight_classes=weight_classes, gamma_focal=gamma_focal, use_mse=self.use_mse)
+                                       weight_classes=weight_classes,
+                                       use_mse=self.use_mse)
     
         # =================================================================================================
         # OPTIMIZER HERE
@@ -953,14 +932,11 @@ class Objective_Multiplex(object):
                                        hyperparams=params,
                                        gamma_rec=params['gamma_rec'],
                                        gamma_lat=params['gamma_lat'],
-                                       gamma_bc=params['gamma_bc'],
-                                       gamma_class=params['gamma_class'],
                                        gamma_graph=params['gamma_graph'],
                                        use_position=params.get('use_position', False),
                                        use_region=params.get('use_region', False),
                                        error_score=self.error_score,
                                        weight_classes=params.get('weight_classes', None),
-                                       gamma_focal=params.get('gamma_focal', 1),
                                        save_model=save_model,
                                        warmup_epochs=100,
                                        )
@@ -982,34 +958,23 @@ class Objective_Multiplex(object):
         # Calculate an objective value by using the extra arguments
         
         params = {
-            # 'init_lr': trial.suggest_float('init_lr', 1e-4, 1e-3, log=True),
             'hidden_dim': trial.suggest_int("hidden_dim", 12, 20),
             'latent_dim': trial.suggest_int("latent_dim", 2, 10),
             'space_planes': trial.suggest_int("space_planes", 2, 6),
             'time_planes': trial.suggest_int("time_planes", 2, 6),
             'depth_nodes': trial.suggest_int("depth_nodes", 1, 2),
             'depth_edges': trial.suggest_int("depth_edges", 1, 2),
-            # 'hidden_dim_ext': trial.suggest_int("hidden_dim_ext", 2, 6),
-            # 'dropout': trial.suggest_float("dropout", 0., 0.1),
-            # 'l1_weight': trial.suggest_float("l1_weight", 0, 10.),
-            # 'l2_weight': trial.suggest_float("l2_weight", 0., 10.),
             'weight_decay': trial.suggest_float("weight_decay", 1e-4, 1e-1, log=True),
             'gamma_rec': trial.suggest_float("gamma_rec", 0.5, 1.),
             'gamma_lat': trial.suggest_float("gamma_lat", 0., 0.5),
-            # 'gamma_bc': trial.suggest_float("gamma_bc", 0., 1),
-            # 'gamma_class': trial.suggest_float("gamma_class", 0.5, 1.),
             'gamma_graph': trial.suggest_float("gamma_graph", 0., 0.5),
-            'use_attention': trial.suggest_categorical("use_attention", [True, False]),
-            # 'use_hdyn': trial.suggest_categorical("use_hdyn", [True, False]),            
+            'use_attention': trial.suggest_categorical("use_attention", [True, False]),            
             'decode_just_latent': trial.suggest_categorical("decode_just_latent", [True, False]),
-            # 'cond_on_time': trial.suggest_categorical("cond_on_time", [True, False]),
-            # 'use_position': trial.suggest_categorical("use_position", [True, False]),
-            # 'batch_size': trial.suggest_categorical("batch_size", [35, 200]),
         }
 
         # Add the default parameters to params if not present already
         config_dict = self.default_params.copy()
-        config_dict.update(params)      # --- Just use the default parameters, don't trust the optimization  
+        config_dict.update(params)
         
         # Save folder
         save_folder = os.path.join(self.save_dir, f'Trial_{trial.number}')
@@ -1046,8 +1011,6 @@ class Objective_Multiplex(object):
 
         # Free memory
         del model
-        # torch.cuda.empty_cache()
-        # gc.collect()
 
         return score
 

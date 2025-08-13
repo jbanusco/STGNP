@@ -75,7 +75,7 @@ class EncoderModel(nn.Module):
         self.latent_dim = latent_dim  # Latent representation
         self.dyn_params = dyn_params  # Context
         self.num_regions = num_regions
-        self.hidden_dim = self.latent_dim + self.dyn_params
+        self.hidden_dim = self.latent_dim + self.dyn_params        
 
         # External
         self.external_dim = external_dim
@@ -97,6 +97,8 @@ class EncoderModel(nn.Module):
 
         # 1. Embedding of the input data
         # ================================== Node embedding    
+        self.norm_in_data = nn.Identity()
+        
         if self.use_batch:
             norm_fn = lambda: BatchNorm(4, self.hidden_dim, 3) if use_norm else nn.Identity()
         else:

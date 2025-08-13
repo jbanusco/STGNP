@@ -11,7 +11,7 @@ import multiprocessing
 multiprocessing.set_start_method("fork", force=True)
 from synthetic_data.synthetic_dataset import collate
 from utils.losses import LossODEProcess
-from model.train_stmgcn_ode import Objective_Multiplex
+from model.train_stgnp import Objective_Multiplex
 from utils.normalisations import compute_norm_info, MaxMin_Normalization, Ratio_Normalization, SpatialMultivariate_Normalization
 from utils.train_loop import train_model
 
@@ -345,17 +345,12 @@ class ObjectiveSynthetic(Objective_Multiplex):
             
             gamma_rec = params.get('gamma_rec', 0)
             gamma_lat = params.get('gamma_lat', 0)
-            gamma_class = params.get('gamma_class', 0)
-            gamma_bc = params.get('gamma_bc', 0)
             gamma_graph = params.get('gamma_graph', 0)
             weight_classes = params.get('weight_classes', None)
-            gamma_focal = params.get('gamma_focal', 0)
             loss_function = LossODEProcess(gamma_rec=gamma_rec,
                                            gamma_lat=gamma_lat,
-                                           gamma_class=gamma_class,
-                                           gamma_bc=gamma_bc,
                                            gamma_graph=gamma_graph,
-                                           weight_classes=weight_classes, gamma_focal=gamma_focal)
+                                           weight_classes=weight_classes,)
             
             # Try getting multiple outputs at different frames
             if n_samples > 1:
@@ -366,32 +361,23 @@ class ObjectiveSynthetic(Objective_Multiplex):
                     list_outputs.append(out_it)
 
                 # Combine the outputs
-                #TODO
-                class_data = torch.stack([out[0] for out in list_outputs], dim=0)
-                rec_data = torch.stack([out[1] for out in list_outputs], dim=0)            
-                latent_rec = torch.stack([out[2] for out in list_outputs], dim=0)
+                rec_data = torch.stack([out[0].mean for out in list_outputs], dim=0)            
+                latent_rec = torch.stack([out[1] for out in list_outputs], dim=0)
 
-                # class_data = output[0]  # Classification ouptut
-                # p_y_pred = output[1]  # Reconstruction output - distribution
-                # latent_rec = output[2] # Latent space trajectorys
-                # force = output[3]  # Force of the system
-                # q_target = output[4]  # Distribution of target latent space
-                # q_context = output[5]  # Distribution of context latent space    
-                # tgt_data = output[-1]
-
-                return (class_data, rec_data, latent_rec)
+                return (rec_data, latent_rec)
             else:
                 list_outputs = batch_loop(model, dataset_loader, loss_function, optimizer, self.device, train_model=False, is_test=False, get_output=True,
                                           **params)
                 
                 # Now, put everything in a single
-                for ix_out, out in enumerate(list_outputs):
-                    class_data_ = out[0]
-                    p_y_pred = out[1]
-                    latent_rec_ = out[2]
-                    graph_reg_ = out[3]
-                    # q_target = out[4]
-                    q_context = out[5]
+                for ix_out, out in enumerate(list_outputs):                    
+                    p_y_pred = out[0]
+                    latent_rec_ = out[1]
+                    graph_reg_ = out[2]                    
+                    # q_target = out[3]
+                    q_context = out[4]
+                    # edges_q_tgt = out[5]
+                    # edges_q_ctx = out[6]                    
                     tgt_data_ = out[-3]
                     tgt_label_ = out[-2]
                     context_pts_ = out[-1]
@@ -400,7 +386,6 @@ class ObjectiveSynthetic(Objective_Multiplex):
                     rec_std_ = p_y_pred.scale
 
                     if ix_out == 0:
-                        class_data = class_data_
                         rec_ft = rec_ft_
                         rec_std = rec_std_
                         latent_rec = latent_rec_
@@ -409,7 +394,6 @@ class ObjectiveSynthetic(Objective_Multiplex):
                         tgt_label = tgt_label_
                         context_pts = context_pts_
                     else:
-                        class_data = torch.cat([class_data, class_data_], dim=0)
                         rec_ft = torch.cat([rec_ft, rec_ft_], dim=0)
                         rec_std = torch.cat([rec_std, rec_std_], dim=0)
                         latent_rec = torch.cat([latent_rec, latent_rec_], dim=0)
@@ -421,7 +405,7 @@ class ObjectiveSynthetic(Objective_Multiplex):
                 del list_outputs
                 del dataset_loader
 
-                return (class_data, rec_ft, rec_std, latent_rec, q_context, graph_reg, tgt_data, tgt_label, context_pts)
+                return (rec_ft, rec_std, latent_rec, q_context, graph_reg, tgt_data, tgt_label, context_pts)
 
 
     def set_indices(self, train_idx, valid_idx, test_idx=None, save_norm=True):
@@ -521,18 +505,13 @@ class ObjectiveSynthetic(Objective_Multiplex):
         # Criterion
         gamma_rec = params.get('gamma_rec', 0)
         gamma_lat = params.get('gamma_lat', 0)
-        gamma_class = params.get('gamma_class', 0)
-        gamma_bc = params.get('gamma_bc', 0)
         gamma_graph = params.get('gamma_graph', 0)
         weight_classes = params.get('weight_classes', None)
-        gamma_focal = params.get('gamma_focal', 0)
-        loss_function = LossODEProcess(gamma_rec=gamma_rec, 
-                                       gamma_lat=gamma_lat, 
-                                       gamma_class=gamma_class, 
-                                       gamma_bc=gamma_bc, 
+        loss_function = LossODEProcess(gamma_rec=gamma_rec,
+                                       gamma_lat=gamma_lat,
                                        gamma_graph=gamma_graph,
-                                       weight_classes=weight_classes, gamma_focal=gamma_focal, use_mse=self.use_mse)
-        # loss_function = nn.MSELoss(reduction='none')
+                                       weight_classes=weight_classes,
+                                       use_mse=self.use_mse)
 
         # =================================================================================================
         # OPTIMIZER HERE
@@ -605,8 +584,6 @@ class ObjectiveSynthetic(Objective_Multiplex):
                                        hyperparams=params,
                                        gamma_rec=params['gamma_rec'],
                                        gamma_lat=params['gamma_lat'],
-                                       gamma_bc=params['gamma_bc'],
-                                       gamma_class=params['gamma_class'],
                                        gamma_graph=params['gamma_graph'],
                                        use_position=params.get('use_position', False),
                                        use_region=params.get('use_region', False),

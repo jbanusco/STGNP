@@ -7,7 +7,7 @@ import logging
 import json
 import multiprocessing
 multiprocessing.set_start_method("fork", force=True)
-from model.train_stmgcn_ode import Objective_Multiplex
+from model.train_stgnp import Objective_Multiplex
 
 from dataset.dataset_utils import get_data
 from utils.utils import seed_everything, str2bool
