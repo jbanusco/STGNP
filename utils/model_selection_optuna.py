@@ -14,6 +14,7 @@ multiprocessing.set_start_method("fork", force=True)
 from sklearn.model_selection import train_test_split
 from utils.model_selection_sklearn import cv_stratified_split
 import optuna
+from configs.env import load_env
 
 
 def get_postgres_db_url():
@@ -21,16 +22,17 @@ def get_postgres_db_url():
     Automatically detect if we are running locally or remotely,
     and return the appropriate PostgreSQL database URL.
     """
-    LOCAL_HOSTNAME = "hos70292"  # Change to your local machine's hostname
-    LOGIN_NODE_HOSTNAME = "login"  # Change to your cluster's login node hostname
-    # POSTGRES_DB_URL = "postgresql://postgres:optuna@localhost:5432/optuna_db"
-    # storage_name = POSTGRES_DB_URL
+    load_env("dev.env") # Load environment variables
+
+    # Read env (dotenv must have been loaded earlier)
+    LOCAL_HOSTNAME = os.getenv("LOCAL_HOSTNAME", "")
+    LOGIN_NODE_HOSTNAME = os.getenv("LOGIN_NODE_HOSTNAME", "")
 
     # Default credentials (must match your PostgreSQL setup)
-    DB_USER = "postgres"
-    DB_PASS = "optuna"
-    DB_NAME = "optuna_db"
-    DB_PORT = 5432  # Default PostgreSQL port
+    DB_USER = os.getenv("DB_USER", "postgres")
+    DB_PASS = os.getenv("DB_PASS", "")
+    DB_NAME = os.getenv("DB_NAME", "optuna_db")
+    DB_PORT = int(os.getenv("DB_PORT", "5432"))
 
     # Determine the correct database host
     current_hostname = socket.gethostname()
@@ -38,13 +40,11 @@ def get_postgres_db_url():
         DB_HOST = "localhost"
         logging.info("Running locally, connecting to PostgreSQL on localhost.")
     elif current_hostname == LOGIN_NODE_HOSTNAME:
-        # DB_HOST = LOGIN_NODE_HOSTNAME  # Use the login node if available
+        DB_HOST = LOGIN_NODE_HOSTNAME
         logging.info(f"Running on the cluster login node: {LOGIN_NODE_HOSTNAME}")
-        DB_HOST = "155.105.223.17"  # Use the IP address of the cluster login node
     else:
-        # Assume we are on a compute node and PostgreSQL is on the login node
-        # DB_HOST = LOGIN_NODE_HOSTNAME
-        DB_HOST = "155.105.223.17"  # Use the IP address of the cluster login node
+        # Assume compute node or elsewhere -> talk to login node
+        DB_HOST = LOGIN_NODE_HOSTNAME or "127.0.0.1"
         logging.info(f"Running remotely on {current_hostname}, connecting to PostgreSQL on {LOGIN_NODE_HOSTNAME}")
 
     return f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
@@ -200,17 +200,7 @@ def hypertune_optuna(objective,
         train_idx, valid_idx, _, _ = train_test_split(all_train, labels, stratify=labels, test_size=0.15)
 
     objective.set_indices(train_idx, valid_idx, test_idx=objective.test_idx, normal_group_idx=None, save_norm=False) # This updates the normalisatiom
-    # os.system(f"rm {save_folder}/model.pt")
-    # os.system(f"rm {save_folder}/checkpoint.pt")
     res_training = objective._train(model, used_params, save_folder, final_model=True, output_probs=kwargs.get('output_probs', False))
-    
-    # np.asarray(res_training['metrics_test']['accuracy']).max()
-    # import matplotlib.pyplot as plt
-    # fig, ax = plt.subplots(1, 2)
-    # ax[0].plot(res_training['losses_test'], label='Test')
-    # ax[0].plot(res_training['losses_train'], label='Train')
-    # ax[1].plot(res_training['metrics_test']['accuracy'], label='Test')
-    # ax[1].plot(res_training['metrics_train']['accuracy'], label='Train')
 
     return model, res_training, best_params
 
@@ -403,11 +393,7 @@ def optuna_nested_cv(objective_optuna,
     else:
         df_params = pd.read_csv(params_filename, index_col=0)
         df_results = pd.read_csv(acc_filename, index_col=0)
-        save_cv_data = torch.load(prob_filename)
-
-    # Train on the final model
-
-    # Select best model and train it on a train+valid split or all the data... [this would be the model that goes into production/in the challenge]
+        save_cv_data = torch.load(prob_filename)        
     
     return df_results, df_params, save_cv_data
 

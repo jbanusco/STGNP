@@ -14,6 +14,9 @@ __pycache__/
 # Weights and biases
 wandb/
 
+# Environment
+dev.env
+
 # Vscode
 .vscode
 .devcontainer

@@ -1,22 +1,108 @@
-Expected to have three files:
-- Nodes data [Volume of each region...]
-- Edges data [Wasserstein distance...]
-- Global data [BMI, ... etc]
+# Multiplex Cardiac Trajectory Modeling
 
-# Scikit-learn version: 1.0.1
-# Scipy: 1.7.0
-# Pandas version: 1.3.4
-# Numpy version: 1.21.4
-# Torch version: 1.10.0
-# DGL version: 0.7.2
-# Pickle version:
+This repository contains code for spatio-temporal multiplex GNNs combined with Neural ODEs for cardiac trajectory modeling.  
+It includes model definitions, training pipelines, hyperparameter tuning with Optuna, and baselines (both synthetic and cardiac datasets).
 
-# Torch-geometric: 2.0.2
-# Torch-sparse: 0.6.12
-# Torch-scatter: 2.0.9
-# Torchvision: 0.11.1
+---
 
+## Model Structure
 
-Default → pip install . will install CPU-safe PyTorch + DGL.
+- **Core model**: `model/stgnp.py`
+- **Encoder/decoder**: `model/encoder_decoder.py`
+- **ODE + multiplex GCN**: `model/mpgcn.py`
+- **Training loop**: `utils/train_loop.py`
+- **Loss functions**: `utils/losses.py`
 
-GPU → pip install .[gpu] will install CUDA 12.1 PyTorch/DGL wheels.
+Hyperparameter optimization is done with Optuna.  
+- Main objective: `model/train_stgnp.py`  
+- Synthetic objective: `...`
+
+---
+
+## Optuna
+
+- The Optuna study is stored in a **Postgres database**.  
+- Scripts are provided to retrieve results and store them locally.
+
+To use the scripts of Optuna, fill the "dev.env.example" and rename it to "dev.env" . 
+
+---
+
+## Data Structure
+
+Experiments expect three input files:
+- **Nodes data**: e.g., regional volumes  
+- **Edges data**: e.g., Wasserstein distances  
+- **Global data**: e.g., BMI, demographics  
+
+---
+
+## Synthetic Baselines
+
+Synthetic datasets generate nodes and edges (global data not used).
+
+To run experiments with default settings:
+
+```bash
+python -m synthetic_data/pendulum.py
+python -m synthetic_data/lorenz_model.py
+python -m synthetic_data/kuramoto.py
+```
+
+---
+
+## Cardiac data
+
+The ACDC data can be download in: 
+
+The cardiac data can be processed using the pipeline available in [url link to another github]. 
+
+The UKB data can be requested at: 
+
+Then, the ADCD data can be run using:
+experiments/ACDC_CV.py for cross-validation and experiments/ACDC_RunBest.py to use the best results.
+
+Similary, for UKB:
+experiments/UKB_CV.py for CV and experiments/UKB_RunBest.py for the best results. 
+
+---
+
+## Baselines
+
+# Classification
+
+Baseline for classification are available for ACDC and UKB , using XGBoost, RandomForest and kNN. 
+
+baselines/Sklearn/ACDC_baselines_sklearn.py
+baselines/Sklearn/UKB_baselines_sklearn.py
+
+# ARIMA forecasting
+baselines/SyntheticForecasting
+
+It needs a secondary environment!
+
+This submodule is intended to run in a separate Python environment from the main
+project. It only requires a small set of packages and avoids the GPU/graph stack
+used by the main code.
+
+Recommended setup (Python 3.10):
+
+# from this subfolder
+python -m venv .venv
+source .venv/bin/activate  # on Windows: .venv\Scripts\activate
+pip install --upgrade pip
+pip install -r requirements.txt
+
+---
+
+## Experiment configurations
+In the HPC you can use the scripts in ... to loda the confg json files available in the configs folder. Then, each experiment
+will use the options there. 
+
+---
+
+## Docker
+
+The main package can be run using the docker:
+
+If you want to re-build the docker can use the script ... changing the paths. 
