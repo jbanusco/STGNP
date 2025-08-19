@@ -1,30 +1,24 @@
 import os
 import numpy as np
-import pickle
 import pandas as pd
 import argparse
 import logging
-import torch
 
 # For the sampling
-from baselines.MLP.train_mlp import Objective_MLP
+from baselines.Sklearn.train_flat_data import Objective_Flat
 
 # Classification
 import xgboost as xgb
-from sklearn import svm
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.ensemble import RandomForestClassifier
 
 from utils.utils import seed_everything, str2bool
-from utils.model_selection_sklearn import nested_cv_model
-from dataset.dataset_utils import get_data
-from dataset.dataset_utils import get_data_in_tensor
-from utils.model_selection_sklearn import cv_model_scaler
 from sklearn.model_selection import StratifiedKFold
+from utils.model_selection_sklearn import nested_cv_model, cv_model_scaler
+from dataset.dataset_utils import get_data, get_data_in_tensor
 
 
 def get_parser() -> argparse.ArgumentParser:
-    # data_path = '/home/jaume/Desktop/Data/New_ACDC/MIDS/mixed/derivatives'
     data_path = "/media/jaume/DATA/Data/New_ACDC/MIDS/mixed/derivatives"
     experiment_name = 'GraphClassification'
     normalisation = 'ZNorm' # NoNorm, ZNorm, MaxMin, Spatial
@@ -76,9 +70,7 @@ def main():
 
     print(args)
     
-    #  ==================== Problem setup ====================    
-    # Load the datasets
-    track_experiment = False
+    #  ==================== Problem setup ====================
 
     # Use of which data
     use_position = True
@@ -120,63 +112,38 @@ def main():
                       'use_position': use_position,
                       }
     
-    objective_optuna = Objective_MLP(study_name,graph_train_dataset,
-                                     normalization=normalization,
-                                     norm_by_group=norm_by_group,
-                                     norm_only_ed=norm_only_ed,
-                                     save_dir=save_folder_dataset,
-                                     direction="maximize",
-                                     device = 'cpu',
-                                     track_experiment=False,
-                                     use_global_data=use_global_data,
-                                     use_position=use_position,
-                                     use_region_id=use_region_id,
-                                     use_time=use_time,
-                                     use_weighted_sampler=False,
-                                     use_focal_loss=False,
-                                     class_dim=5,
+    objective_optuna = Objective_Flat(study_name,
+                                      graph_train_dataset,
+                                      normalization=normalization,
+                                      norm_by_group=norm_by_group,
+                                      norm_only_ed=norm_only_ed,
+                                      save_dir=save_folder_dataset,
+                                      device = 'cpu',
+                                      use_global_data=use_global_data,
+                                      use_position=use_position,
+                                      use_region_id=use_region_id,
+                                      use_time=use_time,
+                                      class_dim=5,
                                      )
     objective_optuna.set_default_params(default_config)
     
-    # Get the data for the latent projection
-    # Get all the data of the dataset
-    # y = objective_optuna.dataset.label.squeeze().data.numpy() 
-    # all_indices = np.arange(0, len(y))
-    # x, x_edges, label = get_data_in_tensor(objective_optuna.dataset, all_indices, device='cpu')
-    # if objective_optuna.default_params['use_edges']:
-    #     normX = torch.cat((x, x_edges), dim=1)
-    # else:
-    #     normX = x
-    # df_raw = pd.DataFrame(data=normX.numpy(), columns=[f'X_{i}' for i in range(normX.shape[1])])
-    # df_raw['Y'] = y
-    # df_raw['Subject'] = objective_optuna.dataset.sub_id
-    # df_raw.to_parquet(os.path.join(derivatives_folder, study_name, 'raw_data.parquet'))
-
     # kNN: NaN results with neighbors above 7
     params = [
-        {'n_neighbors': np.arange(3, 6, 1), 'p': [1, 2], 'leaf_size': [20, 30, 40], 'metric': ['minkowski'], 'weights': ['uniform', 'distance']},        
-        # {'C': np.asarray([1e-5, 1e-4, 1e-3, 1e-2, 1e-1]), 'penalty': ['l2'], 'class_weight': ['balanced']},
-        # {'n_estimators': [601, 1001], 'criterion': ['gini', 'entropy'], 'class_weight': ['balanced', 'balanced_subsample']},
+        {'n_neighbors': np.arange(3, 6, 1), 'p': [1, 2], 'leaf_size': [20, 30, 40], 'metric': ['minkowski'], 'weights': ['uniform', 'distance']},
         {'n_estimators': [601, 1001], 'criterion': ['gini', 'entropy', 'log_loss'], 'class_weight': ['balanced', 'balanced_subsample'], 'max_depth': [10, 20]},
-        # {'n_estimators': [601, 1001], 'reg_alpha': np.linspace(0.1, 0.9, 3), 'reg_lambda': np.linspace(0.1, 0.9, 3), 'subsample': [0.5, 0.75]},
         {'n_estimators': [601, 1001], 'reg_alpha': np.linspace(0.1, 0.9, 3), 'reg_lambda': np.linspace(0.1, 0.9, 3), 'subsample': [0.5, 0.75], 'max_depth': [10, 20]},
-        # {'C': np.asarray([1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1, 10]), 'l1_ratio': np.linspace(0.15, 0.95, 10), 'class_weight': [None, 'balanced']},
     ]
 
     names = [
         "Nearest_Neighbors",
-        # "Linear_SVM",
         "Random_Forest",
         "XGBoost",
-        # "LogisticRegression",
     ]
 
     classifiers = [
         KNeighborsClassifier(5),
-        # svm.LinearSVC(dual=True, fit_intercept=False),
         RandomForestClassifier(),
         xgb.XGBClassifier(eval_metric='mlogloss', num_class=5, learning_rate=0.05, n_jobs=4, objective='multi:softprob'),
-        # LogisticRegression(penalty = 'elasticnet', solver = 'saga'),
     ]
 
     acc = np.zeros((len(classifiers),2))  # Train, Train_Std
@@ -186,6 +153,9 @@ def main():
     train_idx = graph_train_dataset.idx_train
     valid_idx = graph_train_dataset.idx_valid
     test_idx = graph_train_dataset.idx_test
+
+    # We only care about the train indices for the normalisation --- this will run the normalization (same as Multiplex)
+    objective_optuna.set_indices(train_idx, valid_idx, test_idx=test_idx, normal_group_idx=None, save_norm=False)
 
     y = graph_train_dataset.label.squeeze().data.numpy()
     all_indices = np.arange(0, len(y))
@@ -214,8 +184,8 @@ def main():
                     {'X_train': train_indices[fold_train_index], 'X_valid': train_indices[fold_test_index],
                     'y_train': y_train[fold_train_index], 'y_valid': y_train[fold_test_index]})
             
-            acc_cv, params_cv, search_cv = cv_model_scaler(X, y, classifiers[ix], params[ix], in_folds, cv_indices, test_idx, rerun_best=False, 
-                                                        in_params=None, use_scaler=False, n_jobs=2)
+            acc_cv, params_cv, search_cv = cv_model_scaler(X, y, clf, params[ix], in_folds, cv_indices, test_idx, rerun_best=False, 
+                                                           in_params=None, use_scaler=False, n_jobs=2)
             print(acc_cv)
             # Save the results
             search_dict[f"{ix_out}"] = search_cv
@@ -241,8 +211,7 @@ def main():
         
         print(f"Train: {acc[ix, 0]:.2f} +/- {acc[ix, 1]:.2f}")
     
-    # df_results = pd.DataFrame(data=acc, columns=['Acc_Train', 'Acc_Train_Std', 'Acc_Test'], index=names)
-    df_results = pd.DataFrame(data=acc, columns=['Acc_Train', 'Acc_Train_Std'], index=names)
+    df_results = pd.DataFrame(data=acc, columns=['Acc', 'Acc_Std'], index=names)
     df_results['Edges'] = use_edges
     df_results['Normalization'] = normalization
     df_results['Global'] = use_global_data

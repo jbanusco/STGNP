@@ -91,10 +91,10 @@ def cv_model(classifier,
             best_est = classifier.set_params(**model_params)
             search = None
         else:
-            # We only care about the train indices for the normalisation        
+            # We only care about the train indices for the normalisation --- this will run the normalization 
             objective.set_indices(train_idx, valid_idx, test_idx=test_idx, normal_group_idx=None, save_norm=False)
 
-            # Get all the data of the dataset        
+            # Get all the data of the dataset --- this will get the data using a dataloader and a collate to flattent it
             x, x_edges, label = get_data_in_tensor(dataset, all_indices, device='cpu')
             if objective.default_params['use_edges']:
                 normX = torch.cat((x, x_edges), dim=1)
@@ -187,12 +187,15 @@ def nested_cv_model(in_folds,
                 acc_res[ix_out] = acc_cv.reshape(-1)
         else:            
             acc_res = pd.read_csv(results_filename, index_col=0).values
+            df_params = pd.read_csv(os.path.join(save_folder, 'params.csv'), index_col=0)
 
-        # Re-create the best estimator
+        # Re-create the best estimator        
         best_params = df_params[list(params.keys())].iloc[np.argmax(acc_res.reshape(-1))]
         best_params = best_params.to_dict()
         if 'n_estimators' in best_params:
             best_params['n_estimators'] = int(best_params['n_estimators'])
+        if 'max_depth' in best_params:
+            best_params['max_depth'] = int(best_params['max_depth'])
         best_est = classifier.set_params(**best_params)
 
         # Indices for the train / valid split

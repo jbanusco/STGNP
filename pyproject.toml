@@ -75,8 +75,25 @@ indent-width = 4
 
 [tool.ruff.lint]
 extend-select = [
-  "UP", "D", "E", "W", "I", "PL", "F", "PYI", "TID", "G", "SIM",
-  "TCH", "ARG", "A", "B", "COM", "C4", "ASYNC", "C90"
+  "UP",    # pyupgrade  
+  "D",     # pydocstyle
+  "E",     # pycodestyle
+  "W",     # pycodestyle
+  "I",     # isort
+  "PL",    # pylint
+  "F",     # flake8
+  "PYI",   # pyi, flake8
+  "TID",   # tidy imports , flake8
+  "G",     # logging format, flake8
+  "SIM",   # simplify, flake8
+  "TCH",   # type checker, flake8
+  "ARG",   # unused arg checker, flake8
+  "A",     # builtins, flake8
+  "B",     # bugbear, flake8
+  "COM",   # commas, flake8
+  "C4",    # list comprehension, flake8
+  "ASYNC", # async checker, flake8 
+  "C90",   # complexity, flake8
 ]
 
 [tool.ruff.lint.pydocstyle]
