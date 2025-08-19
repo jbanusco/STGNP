@@ -256,14 +256,13 @@ def batch_loop(model: torch.nn.Module,
             continue
 
         # Compute the loss
-        # class_data = output[0]  # Classification ouptut
-        p_y_pred = output[1]  # Reconstruction output - distribution
-        latent_rec = output[2] # Latent space trajectory
-        graph_reg = output[3]  # Graph regularization terms
-        q_target = output[4]  # Distribution of target latent space
-        q_context = output[5]  # Distribution of context latent space
-        tgt_edge_distr = output[6]  # Distribution of target edge space
-        ctx_edge_distr = output[7]  # Distribution of context edge space
+        p_y_pred = output[0]  # Reconstruction output - distribution
+        latent_rec = output[1] # Latent space trajectory
+        graph_reg = output[2]  # Graph regularization terms
+        q_target = output[3]  # Distribution of target latent space
+        q_context = output[4]  # Distribution of context latent space
+        tgt_edge_distr = output[5]  # Distribution of target edge space
+        ctx_edge_distr = output[6] # Distribution of context edge space
 
         if kwargs.get('warmup', False):
             T = tgt_pred.shape[-1]
@@ -365,7 +364,6 @@ class Objective_Multiplex(object):
                  time_planes=1,
                  only_spatial=False,
                  use_norm=True,
-                 classify=False,
                  predict_external=False,
                  use_mse=False,
                  use_diffusion=False,
@@ -394,7 +392,6 @@ class Objective_Multiplex(object):
         self.norm_by_group = norm_by_group
         self.norm_only_ed = norm_only_ed
         self.use_weighted_sampler = use_weighted_sampler
-        self.classify = classify
         self.predict_external = predict_external
 
         # ==== Model setup
@@ -485,7 +482,6 @@ class Objective_Multiplex(object):
             'only_spatial': self.only_spatial,
             'use_norm': self.use_norm,
             'use_mse': self.use_mse,
-            'classify': self.classify,
             'predict_external': self.predict_external,
             'use_diffusion': self.use_dffusion,
             'use_einsum': self.use_einsum,
@@ -726,29 +722,23 @@ class Objective_Multiplex(object):
                     list_outputs.append(out_it)
 
                 # Combine the outputs
-                #TODO                
-                rec_data = torch.stack([out[1] for out in list_outputs], dim=0)            
-                latent_rec = torch.stack([out[2] for out in list_outputs], dim=0)
+                rec_data = torch.stack([out[0].mean for out in list_outputs], dim=0)            
+                latent_rec = torch.stack([out[1] for out in list_outputs], dim=0)
 
-                return (class_data, rec_data, latent_rec)
+                return (rec_data, latent_rec)
             else:
                 list_outputs = batch_loop(model, dataset_loader, loss_function, optimizer, self.device, train_model=False, is_test=False, get_output=True,
                                           **params)
                 
                 # Now, put everything in a single
                 for ix_out, out in enumerate(list_outputs):
-                    class_data_ = out[0]
-                    p_y_pred = out[1]
-                    latent_rec_ = out[2]
-                    graph_reg_ = out[3]                    
-                    q_context = out[5]
-
-                    # The edges
-                    q_space_ctx, q_time_ctx = out[7]
-
-                    # Predicted global data
-                    pred_g_ = out[8]
-
+                    p_y_pred = out[0]
+                    latent_rec_ = out[1]
+                    graph_reg_ = out[2]                    
+                    # q_target = out[3]
+                    q_context = out[4]
+                    # edges_q_tgt = out[5]
+                    q_space_ctx, q_time_ctx = out[6]                    
                     tgt_data_ = out[-3]
                     tgt_label_ = out[-2]
                     context_pts_ = out[-1]
@@ -757,7 +747,6 @@ class Objective_Multiplex(object):
                     rec_std_ = p_y_pred.scale
 
                     if ix_out == 0:
-                        class_data = class_data_
                         rec_ft = rec_ft_
                         rec_std = rec_std_
                         latent_rec = latent_rec_
@@ -765,9 +754,7 @@ class Objective_Multiplex(object):
                         tgt_data = tgt_data_
                         tgt_label = tgt_label_
                         context_pts = context_pts_
-                        pred_g = pred_g_
                     else:
-                        class_data = torch.cat([class_data, class_data_], dim=0)
                         rec_ft = torch.cat([rec_ft, rec_ft_], dim=0)
                         rec_std = torch.cat([rec_std, rec_std_], dim=0)
                         latent_rec = torch.cat([latent_rec, latent_rec_], dim=0)
@@ -775,12 +762,11 @@ class Objective_Multiplex(object):
                         tgt_data = torch.cat([tgt_data, tgt_data_], dim=0)
                         tgt_label = torch.cat([tgt_label, tgt_label_], dim=0)
                         context_pts = torch.cat([context_pts, context_pts_], dim=0)
-                        pred_g = torch.cat([pred_g, pred_g_], dim=0)                        
                 
                 del list_outputs
                 del dataset_loader
 
-                return (class_data, rec_ft, rec_std, latent_rec, q_context, graph_reg, q_space_ctx, q_time_ctx, pred_g, tgt_data, tgt_label, context_pts)
+                return (rec_ft, rec_std, latent_rec, q_context, graph_reg, q_space_ctx, q_time_ctx, tgt_data, tgt_label, context_pts)
 
     def build_model(self, params):
         """Build the model"""
@@ -819,55 +805,10 @@ class Objective_Multiplex(object):
         # OPTIMIZER HERE
         # =================================================================================================        
         # Optimizer
-        # Adam / AdamW / RMSprop / Rprop / ASGD
-        # optimizer = torch.optim.Adam([{'params': encoder_params(model), 'lr': init_lr},
-        #                               {'params': decoder_params(model), 'lr': init_lr},
-        #                               {'params': classifier_params(model), 'lr': init_lr},
-        #                               {'params': multiplex_params(model), 'lr': init_lr},
-        #                               ], lr=init_lr, weight_decay=weight_decay)
-        # optimizer = torch.optim.Adam(model.parameters(), lr=init_lr, weight_decay=weight_decay, betas=(0.9, 0.95))
-        # optimizer = torch.optim.Adam(model.parameters(), lr=init_lr, weight_decay=weight_decay)
-        # optimizer = torch.optim.AdamW(model.parameters(), lr=init_lr, weight_decay=weight_decay)
         optimizer = torch.optim.AdamW(model.parameters(), lr=init_lr, weight_decay=weight_decay, amsgrad=False, eps=1e-8, betas=(0.9, 0.999))
 
-        # optimizer = torch.optim.RMSprop(model.parameters(), lr=init_lr, alpha=0.99)
-        # optimizer = ADPOT(model.parameters(), lr=init_lr, weight_decay=weight_decay)
-        # Scheduler
-        # scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9)
-        # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 100, gamma=0.5, last_epoch=-1)
-
-        # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min',
-        #                                                         factor=params.get('lr_reduce_factor', 0.4),
-        #                                                         patience=params.get('lr_schedule_patience', 20),
-        #                                                         threshold=params.get('lr_schedule_threshold', 1e-4),
-        #                                                         min_lr=params.get('lr_min', 1e-6),
-        #                                                         )
-
-        # Scheduler with early cut-off factor of 1.15
-        # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=int((num_epochs-50) * 1.15), eta_min=1e-5)
+        # Scheduler with early cut-off factor of 1.15        
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=10, factor=0.5, min_lr=1e-5)
-
-        # The weighted sampler
-        if self.use_weighted_sampler: 
-            # dict_groups = self.dataset.global_data[['Group', 'Group_Cat']].drop_duplicates().dropna().set_index(['Group']).to_dict()['Group_Cat']
-            # NOR is label 3, the rest are pathological
-            labels = self.dataset.label
-            num_nor = int((labels == 3).sum())
-            num_path = len(labels) - num_nor
-            num_total = len(labels)
-            weight_path = 1 / (num_path/num_total)
-            weight_nor = 1 / (num_nor/num_total)
-            class_weights = torch.tensor([weight_path, weight_path, weight_path, weight_nor, weight_path])
-            # class_weights = torch.tensor([1, 1, 1, 1, 1])  # No weights
-
-            # The sampler is per dataloader
-            train_labels = labels[self.train_idx]
-            weights_per_sample = [class_weights[label] for label in train_labels]
-            sampler = WeightedRandomSampler(weights=weights_per_sample, num_samples=batch_size, replacement=True)
-            shuffle = False
-        else:
-            sampler = None
-            shuffle = True
 
         # Datasets
         if final_model:
@@ -889,10 +830,9 @@ class Objective_Multiplex(object):
         total_cpus = self.num_jobs * 2  # It seems that in SLURM the number of CPUs is not reliable usng mp.cpu_count()
         num_workers_per_dataloader = max(1, (total_cpus // self.num_jobs) // 4)  # Balance CPU usage
         drop_last = False if batch_size >= len(train_dataset) else True
-        # drop_last = False
+        
         train_dataloader = DataLoader(train_dataset, collate_fn=collate, batch_size=batch_size, shuffle=True, drop_last=drop_last, sampler=None,
                                       prefetch_factor=2, num_workers=num_workers_per_dataloader, pin_memory=True, persistent_workers=True)
-        
         if valid_dataset is not None:
             val_dataloader = DataLoader(valid_dataset, collate_fn=collate, batch_size=len(valid_dataset))
         else:
@@ -927,7 +867,6 @@ class Objective_Multiplex(object):
                                        track_experiment=self.track_experiment,
                                        l1_weight=params.get('l1_weight', 0.),
                                        l2_weight=params.get('l2_weight', 0.),
-                                       output_probs=output_probs, 
                                        batch_loop=self.batch_loop,
                                        hyperparams=params,
                                        gamma_rec=params['gamma_rec'],
@@ -936,7 +875,6 @@ class Objective_Multiplex(object):
                                        use_position=params.get('use_position', False),
                                        use_region=params.get('use_region', False),
                                        error_score=self.error_score,
-                                       weight_classes=params.get('weight_classes', None),
                                        save_model=save_model,
                                        warmup_epochs=100,
                                        )

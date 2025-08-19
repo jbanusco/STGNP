@@ -98,6 +98,7 @@ class EncoderModel(nn.Module):
         # 1. Embedding of the input data
         # ================================== Node embedding    
         self.norm_in_data = nn.Identity()
+        in_dim = self.in_dim + self.hidden_dim_ext
         
         if self.use_batch:
             norm_fn = lambda: BatchNorm(4, self.hidden_dim, 3) if use_norm else nn.Identity()

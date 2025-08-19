@@ -2,31 +2,19 @@ import os
 import json
 import argparse
 
-import matplotlib.pyplot as plt
-import seaborn as sns
 import pickle
 import numpy as np
 import pandas as pd
 import torch
 import logging
 from sklearn.model_selection import StratifiedKFold, train_test_split
-import xgboost as xgb
-
-from model.train_stmgcn_ode import Objective_Multiplex
-from model.testing_model import get_accuracies, save_training_convergence, save_mean_positions, plot_subject_trajectory, plot_subject_position
-# from utils.plot_utils import plot_confusion_matrx, plot_latent_space, to_long_format, plot_with_error, save_mean_trajectories
-from experiments.ACDC_CV import save_training_convergence, plot_results, export_latent_data, plot_combined_trajectories, get_data_in_original_scale
-from experiments.ACDC_All import plot_predicted_trajectories
 
 from dataset.dataset_utils import get_data
 from utils.utils import seed_everything, str2bool, get_best_params
-
-from utils.model_selection_optuna import hypertune_optuna, optuna_cv, optuna_nested_cv
-from utils.model_selection_sklearn import cv_stratified_split
-
+from model.train_stgnp import Objective_Multiplex
 from sklearn.ensemble import RandomForestClassifier
 from utils.model_selection_sklearn import cv_model_scaler
-from model.testing_model import get_latex_table, wrap_latex_table
+from model.plot_and_print_utils import get_latex_table, wrap_latex_table, save_training_convergence, plot_results, export_latent_data, plot_combined_trajectories, get_data_in_original_scale, plot_predicted_trajectories
 
 import matplotlib
 matplotlib.use('Agg')
@@ -132,7 +120,6 @@ if __name__ == "__main__":
     
     #  ==================== Device setup ====================
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    # device = 'cpu'
 
     #  ==================== Problem setup ====================    
     # Load the datasets
@@ -192,10 +179,8 @@ if __name__ == "__main__":
     gamma_lat = args.gamma_lat  # Latent space
     gamma_bc = args.gamma_bc  # Boundary condition
     gamma_graph = args.gamma_graph  # Graph regularization
-
-    # dt_step_size = 1/((duration/dt)*0.5)
-    dt_step_size = 0.1 # ?
-    # dt_step_size = 0.05
+    
+    dt_step_size = 0.1
     hidden_dim_ext = 6
     
     default_config = {'hidden_dim': hidden_dim, 
@@ -246,9 +231,6 @@ if __name__ == "__main__":
                                            use_region_id=use_region_id,
                                            use_time=use_time,
                                            use_weighted_sampler=False,
-                                           use_focal_loss=False,
-                                           classify=False,
-                                           class_dim=2,
                                            only_spatial=False,
                                            space_planes=args.space_planes,
                                            time_planes=args.time_planes,
@@ -281,20 +263,7 @@ if __name__ == "__main__":
     df_params = pd.read_csv(df_params_path)
     df_params.dropna(how='any', inplace=True)
     df_params = df_params.sort_values(by='value', ascending=False)
-    # params_names = [key for key in df_params.columns if key.startswith('params_')]
-    # best_params = df_params.iloc[0].to_dict()
-    # # best_params = df_params.iloc[0:5][params_names].mean().to_dict()
-    # best_params = {key.replace('params_', ''): value for key, value in best_params.items() if key.startswith('params_')}
-
-    # best_params.pop('gamma_graph')
-    # ACDC params
-    # best_params = {'gamma_graph': 0.3141587649649658, 'gamma_lat': 0.2187496033958544, 'gamma_rec': 0.7059566276701489, 'weight_decay': 0.020674875272632422}
-    # best_params = {'decode_just_latent': False, 'gamma_graph': 0.3351451406610736, 'gamma_lat': 0.3521755544702771, 'gamma_rec': 0.563451698900889, 'hidden_dim': 25, 'latent_dim': 10, 'space_planes': 3, 'time_planes': 5, 'weight_decay': 0.0505005360123216}
     best_params = get_best_params(df_params.iloc[0:5], use_median=True)
-    # best_params = get_best_params(df_params.iloc[0:1], use_median=True)
-    # best_params['hidden_dim'] = 18
-    # best_params['space_planes'] = 6
-    # best_params['time_planes'] = 5
 
     model_params = objective_optuna.default_params.copy()
     model_params.update(best_params)
@@ -307,8 +276,7 @@ if __name__ == "__main__":
 
     # Model
     model = objective_optuna.build_model(model_params)
-    # res_training = objective_optuna._train(model, objective_optuna.default_params, tmp_save, final_model=False)
-    res_training = objective_optuna._train(model, model_params, tmp_save, final_model=True)  # Reload
+    res_training = objective_optuna._train(model, model_params, tmp_save, final_model=True)
 
     final_model = f"{tmp_save}/model.pt"    
     append_att = "_Att" if use_attention else ""
@@ -319,15 +287,8 @@ if __name__ == "__main__":
     # Get the features to predict
     idx_thickness = np.where(np.isin(objective_optuna.dataset.list_node_features, ['Thickness_Median']))[0]
     idx_volume = np.where(np.isin(objective_optuna.dataset.list_node_features, ['Volume_Index']))[0]
-    idx_median = np.where(np.isin(objective_optuna.dataset.list_node_features, ['Intensity_Median']))[0]
-    idx_J = np.where(np.isin(objective_optuna.dataset.list_node_features, ['J_Median']))[0]
     fts_to_predict = np.concatenate([idx_thickness, idx_volume])
-    # fts_to_predict = np.concatenate([idx_thickness, idx_volume, idx_median])
-    # fts_to_predict = np.concatenate([idx_thickness, idx_volume, idx_J])
 
-    # time_to_predict = np.arange(0, 100, 1)  # Predict 100 steps more
-    # steps_to_predict = int(50 / dt_step_size)
-    # time_to_predict = np.arange(0, 50, 1)  # Predict steps more
     time_to_predict = torch.arange(0, 50, 1)
     pred_trajectory, pred_latent, tgt_trajectory = objective_optuna.predict_from_latent(model, objective_optuna.dataset, time_to_predict, model_params, device=device)    
 
@@ -352,20 +313,10 @@ if __name__ == "__main__":
     plot_results(model, objective_optuna, model_params, save_folder, plot_individual=False, plot_spatial=False, fts_to_predict=fts_to_predict)
     export_latent_data(model, objective_optuna, model_params, save_folder)
 
-    # plot_predicted_trajectories(objective_optuna, pred_latent, pred_trajectory, save_folder, fts_to_predict=fts_to_predict,
-    #                             normalization=normalization, plot_individual=True, true_trajectory=tgt_trajectory, plot_spatial=False)
-    # save_training_convergence(res_training, save_folder)
-    # export_latent_data(model, objective_optuna, objective_optuna.default_params, save_folder)
-    # plot_results(model, objective_optuna, objective_optuna.default_params, save_folder, plot_individual=False, fts_to_predict=fts_to_predict)
-
     # ============================================================================================================================
     # Load the data . pkl
     data_filename = os.path.join(save_folder, 'data.pkl')
     data_model = torch.load(data_filename)
-
-    # Load the latent data
-    # Get the summary statistics
-    # latent_traj_fts = extract_trajectory_features(torch.tensor(data_model['latent_trajectories']).float()).data.cpu().numpy()
 
     # Load the latent data
     latent_data = pd.read_csv(latent_filename, index_col=0)
@@ -385,11 +336,7 @@ if __name__ == "__main__":
     params_filename = os.path.join(save_folder, 'params.csv')
     search_filename = os.path.join(save_folder, 'search.pkl')
 
-    # X = latent_traj_fts
-    # X = pd.concat([latent_info, latent_edges], axis=1).to_numpy()
-    # X = pd.concat([latent_info, latent_data_std], axis=1).to_numpy()
-    X = latent_info.to_numpy()  # Initial state and control 
-    # X = data_model['latent_trajectories'].reshape(y.shape[0], -1)  # The whole trajectory
+    X = latent_info.to_numpy()  # Initial state and control     
 
     results_filename = os.path.join(save_folder, 'model_results.csv')
     params_filename = os.path.join(save_folder, 'params.csv')
@@ -397,20 +344,15 @@ if __name__ == "__main__":
 
     # Now, let's set-up a nested CV for the classification    
     params = [
-        # {'n_estimators': [601, 1001], 'criterion': ['gini'], 'class_weight': ['balanced']}, #'max_depth': [10, 20]}, \
-        # {'n_estimators': [601, 1001], 'criterion': ['gini'], 'class_weight': ['balanced'], 'max_depth': [10, 20]},        
-        {'n_estimators': [601, 1001], 'criterion': ['gini', 'entropy', 'log_loss'], 'class_weight': ['balanced', 'balanced_subsample'], 'max_depth': [10, 20]},
-        # {'n_estimators': [601, 1001], 'reg_alpha': np.linspace(0.1, 0.9, 3), 'reg_lambda': np.linspace(0.1, 0.9, 3), 'subsample': [0.5, 0.75], 'max_depth': [10, 20]},
+        {'n_estimators': [601, 1001], 'criterion': ['gini', 'entropy', 'log_loss'], 'class_weight': ['balanced', 'balanced_subsample'], 'max_depth': [10, 20]},        
     ]
 
     names = [
         "Random_Forest",
-        # "XGBoost",
     ]
 
     classifiers = [
         RandomForestClassifier(),
-        # xgb.XGBClassifier(eval_metric='logloss', learning_rate=0.05, n_jobs=2),
     ]
 
     out_folds = 1

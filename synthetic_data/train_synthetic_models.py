@@ -126,14 +126,13 @@ def batch_loop(model: torch.nn.Module,
             continue
 
         # === Compute the loss
-        # class_data = output[0]  # Classification ouptut
-        p_y_pred = output[1]  # Reconstruction output - distribution
-        latent_rec = output[2] # Latent space trajectory
-        graph_reg = output[3]  # Graph regularization terms
-        q_target = output[4]  # Distribution of target latent space
-        q_context = output[5]  # Distribution of context latent space
-        tgt_edge_distr = output[6]  # Distribution of target edge space
-        ctx_edge_distr = output[7]  # Distribution of context edge space
+        p_y_pred = output[0]  # Reconstruction output - distribution
+        latent_rec = output[1] # Latent space trajectory
+        graph_reg = output[2]  # Graph regularization terms
+        q_target = output[3]  # Distribution of target latent space
+        q_context = output[4]  # Distribution of context latent space
+        tgt_edge_distr = output[5]  # Distribution of target edge space
+        ctx_edge_distr = output[6]  # Distribution of context edge space
 
         label = None
         if kwargs.get('warmup', False):
@@ -579,7 +578,6 @@ class ObjectiveSynthetic(Objective_Multiplex):
                                        track_experiment=self.track_experiment,
                                        l1_weight=params.get('l1_weight', 0.),
                                        l2_weight=params.get('l2_weight', 0.),
-                                       output_probs=output_probs, 
                                        batch_loop=self.batch_loop,
                                        hyperparams=params,
                                        gamma_rec=params['gamma_rec'],
@@ -588,7 +586,6 @@ class ObjectiveSynthetic(Objective_Multiplex):
                                        use_position=params.get('use_position', False),
                                        use_region=params.get('use_region', False),
                                        error_score=self.error_score,
-                                       weight_classes=params.get('weight_classes', None),
                                        gamma_focal=params.get('gamma_focal', 1),
                                        multiplex=False,
                                        save_model=save_model,

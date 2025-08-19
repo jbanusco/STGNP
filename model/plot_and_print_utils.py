@@ -625,22 +625,20 @@ def export_latent_data(trained_model, objective, params_model, save_path):
     normalization = objective.normalization
     output = objective.get_output_of_model(trained_model, objective.dataset, None, None, n_samples=n_samples, params=params_model)
     # labels_tmp = objective.dataset.label
+    
+    rec_ft = output[0]  # Reconstruction output - mean
+    rec_std = output[1]  # Reconstruction output - std
+    latent_rec_plot = output[2] # Latent space trajectorys
+    q_context = output[3]
+    graph_reg = output[4]  # Graph reg.
+    q_space_ctx = output[5]  # Initial edges
+    q_time_ctx = output[6]    
 
-    class_data = output[0]  # Classification ouptut    
-    rec_ft = output[1]  # Reconstruction output - mean
-    rec_std = output[2]  # Reconstruction output - std
-    latent_rec_plot = output[3] # Latent space trajectorys
-    q_context = output[4]
-    force = output[5]  # Force of the system
-    q_space_ctx = output[6]  # Initial edges
-    q_time_ctx = output[7]
-    pred_g = output[8]
-    if objective.class_dim > 0:
-        tgt_data = output[-3]
-        labels = output[-2].to('cpu')
+    tgt_data = output[-3]
+    if output[-2] is None:
+        labels = torch.ones((rec_ft.shape[0], 1))  # No labels
     else:
-        tgt_data = output[-3]
-        labels = torch.ones((rec_ft.shape[0], 1))
+        labels = output[-2].unsqueeze(-1).to('cpu')    
     
     # Transform back target and 3ions
     rec_data = rec_ft.detach().cpu()
@@ -705,7 +703,7 @@ def export_latent_data(trained_model, objective, params_model, save_path):
     df_joined_std.to_csv(os.path.join(save_path, 'latent_data_std.csv'))
 
     # Get the labels    
-    df_joined['labels'] = labels.cpu().unsqueeze(-1).numpy()
+    df_joined['labels'] = labels.cpu().numpy()
     df_joined['Subject'] = objective.dataset.sub_id
     df_joined.to_csv(os.path.join(save_path, 'latent_data.csv'))
 
@@ -1474,9 +1472,11 @@ def plot_results(trained_model, objective, params_model, save_path, plot_individ
             A = np.ones((int(objective.dataset.num_nodes**0.5), int(objective.dataset.num_nodes**0.5)))
             plot_state(rec_trajectories, A, save_path_fig, dim_state=0, x_tgt=tgt_trajectories, frames_idx=plotted_frames, subj_idx=0)
 
-    unique_labels = np.unique(labels)
+    unique_labels = torch.unique(labels)
     if len(unique_labels) > 1:
-        for label in unique_labels:
+        labels = labels.cpu().numpy()
+        unique_labels = unique_labels.cpu().numpy()
+        for label in unique_labels:            
             idx = np.where(labels == label)[0]
             save_folder = os.path.join(save_path, f'{dict_labels[label]}')
             os.makedirs(save_folder, exist_ok=True)
@@ -1602,18 +1602,6 @@ def save_training_convergence(training_results, save_path, save_format='png'):
     ax[0].set_ylabel('Loss')
     ax[0].set_title('Losses')
     ax[0].set_ylim(min_limit, max_limit)
-
-    # Accuracy
-    acc_train_track = training_results['metrics_train']['accuracy']
-    acc_valid_track = training_results['metrics_valid']['accuracy']
-    acc_test_track = training_results['metrics_test']['accuracy']
-    ax[1].plot(epochs, acc_train_track, label='Train acc')
-    ax[1].plot(epochs, acc_valid_track, label='Val acc')
-    ax[1].plot(epochs, acc_test_track, label='Test acc')    
-    ax[1].legend()
-    ax[1].set_xlabel('Epoch')
-    ax[1].set_ylabel('Accuracy')
-    ax[1].set_title('Accuracy')
     
     # fig.savefig(os.path.join(save_path, 'training_results.png'))
     fig.savefig(os.path.join(save_path, f'training_results.{save_format}'), bbox_inches='tight', dpi=300)

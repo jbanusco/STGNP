@@ -538,4 +538,4 @@ class STGNP(nn.Module):
                 latent_state = self.stgcn.get_latent_state(self.stgcn.g, self.use_attention)
                 latent_state['l_end'] = reshape_to_graph(latent[...,[-1]].clone().detach()).float()
 
-                return p_y_pred, latent, (spatial_norm, temporal_norm), None, q_context, (None, None, None), (q_space_ctx, q_time_ctx), latent_state
+                return p_y_pred, latent, (spatial_norm, temporal_norm), None, q_context, (None, None), (q_space_ctx, q_time_ctx), latent_state

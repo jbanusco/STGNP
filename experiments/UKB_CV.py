@@ -69,8 +69,6 @@ def get_parser() -> argparse.ArgumentParser:
     parser.add_argument('--num_jobs', type=int, default=0, help='Number of jobs in parallel')
 
     parser.add_argument('--gamma_rec', type=float, default=1., help='Weight for the regression loss')
-    parser.add_argument('--gamma_class', type=float, default=0., help='Weight for the classification loss')
-    parser.add_argument('--gamma_bc', type=float, default=0., help='Weight for the boundary condition in the latent space')
     parser.add_argument('--gamma_lat', type=float, default=0.05, help='L2 weight for the latent space')
     parser.add_argument('--gamma_graph', type=float, default=0.1, help='Weight for the graph regularization')
 
@@ -116,7 +114,6 @@ if __name__ == "__main__":
     # Use of which data
     use_position = True
     use_region_id = True
-    # use_region_id = False
     use_time = False
 
     # Normalization options    
@@ -169,10 +166,8 @@ if __name__ == "__main__":
     gamma_lat = args.gamma_lat  # Latent space
     gamma_bc = args.gamma_bc  # Boundary condition
     gamma_graph = args.gamma_graph  # Graph regularization
-
-    # dt_step_size = 1/((duration/dt)*0.5)
-    dt_step_size = 0.1 # ?
-    # dt_step_size = 0.05
+    
+    dt_step_size = 0.1 # ?    
     hidden_dim_ext = 6    
     
     default_config = {'hidden_dim': hidden_dim, 
@@ -188,9 +183,7 @@ if __name__ == "__main__":
                       'use_attention': use_attention,
                       'use_constant_edges': use_constant_edges,
                       'gamma_rec': gamma_rec,
-                      'gamma_class': gamma_class,
                       'gamma_lat': gamma_lat,
-                      'gamma_bc': gamma_bc,
                       'gamma_graph': gamma_graph,
                       'use_region': use_region_id,
                       'decode_just_latent': decode_just_latent,
@@ -223,9 +216,6 @@ if __name__ == "__main__":
                                            use_region_id=use_region_id,
                                            use_time=use_time,
                                            use_weighted_sampler=False,
-                                           use_focal_loss=False,
-                                           class_dim=2,
-                                           classify=False,
                                            only_spatial=False,
                                            space_planes=args.space_planes,
                                            time_planes=args.time_planes,
@@ -260,8 +250,6 @@ if __name__ == "__main__":
 
     # Model
     model = objective_optuna.build_model(objective_optuna.default_params)
-    # res_training = objective_optuna._train(model, objective_optuna.default_params, tmp_save, final_model=False)
-    # res_training = objective_optuna._train(model, objective_optuna.default_params, tmp_save, final_model=True)  # Reload
 
     # ============================================================================================================================
     # ============================================================================================================================

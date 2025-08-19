@@ -159,7 +159,7 @@ def train_model(model: torch.nn.Module,
     hyperparameters = kwargs.get('hyperparams', None)
     use_optuna = kwargs.get('use_optuna', False)
     error_score = kwargs.get('error_score', torch.FloatTensor([-np.inf]).to(device))
-    metrics_used = kwargs.get('metrics_used', 'accuracy')
+    metrics_used = kwargs.get('metrics_used', 'mse')
     # Store if we want to output probabilities at the end
     output_probs = kwargs.get('output_probs', False)
     # Set output_probs to False to prevent error during training
@@ -258,15 +258,12 @@ def train_model(model: torch.nn.Module,
         losses_test = torch.zeros(epochs, device='cpu')
 
         track_metrics_train = {
-            'accuracy': torch.zeros(epochs, device='cpu'),
             'mse': torch.zeros(epochs, device='cpu')
         }
         track_metrics_valid = {
-            'accuracy': torch.zeros(epochs, device='cpu'),
             'mse': torch.zeros(epochs, device='cpu')
         }
         track_metrics_test = {
-            'accuracy': torch.zeros(epochs, device='cpu'),
             'mse': torch.zeros(epochs, device='cpu')
         }
         
@@ -361,17 +358,11 @@ def train_model(model: torch.nn.Module,
             losses_train[epoch] = loss_train
             losses_valid[epoch] = loss_val
             losses_test[epoch] = loss_test
-            track_metrics_train['accuracy'][epoch] = metrics_train['accuracy']
-            track_metrics_valid['accuracy'][epoch] = metrics_val['accuracy']
-            track_metrics_test['accuracy'][epoch] = metrics_test['accuracy']
             if 'mse' in metrics_train:
                 track_metrics_train['mse'][epoch] = metrics_train['mse']
                 track_metrics_valid['mse'][epoch] = metrics_val['mse']
                 track_metrics_test['mse'][epoch] = metrics_test['mse']
 
-        acc_train = track_metrics_train['accuracy'][epoch]
-        acc_valid = track_metrics_valid['accuracy'][epoch]
-        acc_test = track_metrics_test['accuracy'][epoch]
         if track_experiment:
             # Trajectories to tensorboard
             if epoch % print_epoch == 0:
@@ -408,9 +399,9 @@ def train_model(model: torch.nn.Module,
 
         if epoch % print_epoch == 0:
             str_msg = f'==== Epoch [{epoch}/{epochs}] ====\n' \
-            f'Training:\nLoss: {losses_train[epoch]:.4f}\tAccuracy: {acc_train:.3f}\n' \
-            f'Validation:\nLoss: {losses_valid[epoch]:.4f}\tAccuracy: {acc_valid:.4f}\n' \
-            f'Test:\nLoss: {losses_test[epoch]:.4f}\tAccuracy: {acc_test:.4f}\n' \
+            f'Training:\nLoss: {losses_train[epoch]:.4f}\n' \
+            f'Validation:\nLoss: {losses_valid[epoch]:.4f}\n' \
+            f'Test:\nLoss: {losses_test[epoch]:.4f}\n' \
             f'MAE: {metrics_train["mae"]:.4f}\tMSE: {metrics_train["mse"]:.4f}\n' \
             f'MAE pred: {metrics_train["mae_pred"]:.4f}\tMSE pred: {metrics_train["mse_pred"]:.4f}\n' \
             f'Best Score: {best_score:.4f}\tScore: {score:.4f}\n' \
@@ -524,13 +515,10 @@ def train_model(model: torch.nn.Module,
     if failed:        
         best_score = error_score  # This is to avoid using this model (a very bad score, assuming we want to maximize the score)
 
-    best_acc_train = track_metrics_train['accuracy'][best_epoch]
-    best_acc_valid = track_metrics_valid['accuracy'][best_epoch]
-    best_acc_test = track_metrics_test['accuracy'][best_epoch]
     str_msg = f'==== Best epoch: {best_epoch} [{best_epoch}/{epochs}] ====\n' \
-    f'Training:\nLoss: {losses_train[best_epoch]:.4f}\tAccuracy: {best_acc_train:.4f}\n' \
-    f'Validation:\nLoss: {losses_valid[best_epoch]:.4f}\tAccuracy: {best_acc_valid:.4f}\n' \
-    f'Test:\nLoss: {losses_test[best_epoch]:.4f}\tAccuracy: {best_acc_test:.4f}\n' \
+    f'Training:\nLoss: {losses_train[best_epoch]:.4f}\n' \
+    f'Validation:\nLoss: {losses_valid[best_epoch]:.4f}\n' \
+    f'Test:\nLoss: {losses_test[best_epoch]:.4f}\n' \
     f'Best Score: {best_score:.4f}\n'
 
     print(str_msg)
