@@ -53,9 +53,11 @@ print(params)
     fi
 }
 
+
+# For example
 synthetic_data="/data/bdip2/jbanusco/Data/Multiplex_Synthetic_FINAL"
 run_best_model True ${synthetic_data} "pendulum" "synthetic_data.pendulum"
 run_best_model True ${synthetic_data} "lorenz" "synthetic_data.lorenz_model"
-# run_best_model True ${synthetic_data} "kuramoto" "synthetic_data.kuramoto"
-# run_best_model False "/data/bdip2/jbanusco/ACDC/MIDS/mixed/derivatives" "cardiac_acdc" "experiments.ACDC_RunBest"
-# n_best_model False "/data/bdip2/jbanusco/UKB_Cardiac_BIDS/derivatives" "cardiac_ukb" "experiments.UKB_RunBest"
+run_best_model True ${synthetic_data} "kuramoto" "synthetic_data.kuramoto"
+run_best_model False "/data/bdip2/jbanusco/ACDC/MIDS/mixed/derivatives" "cardiac_acdc" "experiments.ACDC_RunBest"
+run_best_model False "/data/bdip2/jbanusco/UKB_Cardiac_BIDS/derivatives" "cardiac_ukb" "experiments.UKB_RunBest"

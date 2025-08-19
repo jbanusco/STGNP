@@ -4,13 +4,12 @@
 
 # Define paths
 code_path='/cluster/home/ja1659/Code/stmgcn'
-# datapath="/data/bdip2/jbanusco/Data/Multiplex_Synthetic_FINAL"
 datapath='/data/bdip2/jbanusco/UKB_Cardiac_BIDS/derivatives'
 singularity_image='/data/bdip2/jbanusco/SingularityImages/multiplex-cpu_0.0.sif'
 
-# Load JSON Config
-dataset_config=${code_path}"/configs/cardiac_ukb.json"
-# dataset_config=${code_path}"/configs/cardiac_ukb_all.json"
+# Load JSON Config -- either all or just anat edges
+dataset_config=${code_path}"/configs/cardiac_ukb.json"  # Anat
+# dataset_config=${code_path}"/configs/cardiac_ukb_all.json"  # Full
 
 # Parse JSON for job-specific parameters
 num_jobs=10  # Number of SLURM jobs

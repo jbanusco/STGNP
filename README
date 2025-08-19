@@ -99,6 +99,8 @@ pip install -r requirements.txt
 In the HPC you can use the scripts in ... to loda the confg json files available in the configs folder. Then, each experiment
 will use the options there. 
 
+The scripts located in hpc folder.
+
 ---
 
 ## Docker

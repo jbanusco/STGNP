@@ -2,7 +2,6 @@
 #SBATCH --job-name=baselines_sk
 #SBATCH --output=/cluster/home/ja1659/logs/baselines_sk_%A_%a.out
 #SBATCH --error=/cluster/home/ja1659/logs/baselines_sk_%A_%a.err
-##SBATCH --array=0-5  # Old 
 #SBATCH --array=0-1
 #SBATCH --time=30:00:00
 ##SBATCH --mem=8G
@@ -29,12 +28,11 @@ echo "Use Similarity Options: $use_similarity"
 echo "Drop Blood Pools: $drop_bp"
 echo "Use Global Data: $use_global_data"
 use_edges=True
-load=False
+load=True
+reprocess_dataset=False
 
 # Script to generate the different datasets and the set of indices for the nested CV
-# singularity_image='/data/bdip2/jbanusco/SingularityImages/multiplex_0.0.sif'
 singularity_image='/data/bdip2/jbanusco/SingularityImages/multiplex-cpu_0.0.sif'
-# datapath='/data/bdip2/jbanusco/ACDC/MIDS/mixed/derivatives'
 datapath='/data/bdip2/jbanusco/UKB_Cardiac_BIDS/derivatives'
 code_path='/cluster/home/ja1659/Code/stmgcn'
 
@@ -45,20 +43,12 @@ data_folder='/usr/data'
 # Main options
 data_folder='/home/jaume/Desktop/Data/New_ACDC/MIDS/mixed/derivatives'
 experiment_name='GraphClassification'
-seed=5593
-reprocess_dataset=False
-
-# CV options
-inner_cv_folds=3
-outer_cv_folds=2
-test_size=0.15
-splits_file=${data_folder}'/'${experiment_name}'/nested_cv_indices.pkl'
 
 # Print the chosen parameters
 echo "SLURM_ARRAY_TASK_ID: $SLURM_ARRAY_TASK_ID"
 echo "use_all=${use_all}, use_similarity=${use_similarity}, drop_bp=${drop_bp}"
 
 echo "Generating Sklearn for use_all=${use_all}, use_similarity=${use_similarity}, drop_bp=${drop_bp} and normalization=${normalization}"
-singularity exec --bind ${datapath}:${data_folder} --bind ${code_path}:${project_path} ${singularity_image} /bin/bash -c "cd ${project_path} && python3 -m baselines.Sklearn.UKB_baselines_sklearn --data_folder ${data_folder} --experiment_name ${experiment_name} --normalization ${normalization} --use_global_data ${use_global_data} --use_edges ${use_edges} --use_all ${use_all} --use_similarity ${use_similarity} --drop_blood_pools ${drop_bp} --reprocess_dataset ${reprocess_dataset} --load ${load} --in_folds ${inner_cv_folds} --out_folds ${outer_cv_folds} --test_size ${test_size} --splits_file ${splits_file}"
+singularity exec --bind ${datapath}:${data_folder} --bind ${code_path}:${project_path} ${singularity_image} /bin/bash -c "cd ${project_path} && python3 -m baselines.Sklearn.UKB_baselines_sklearn --data_folder ${data_folder} --experiment_name ${experiment_name} --normalization ${normalization} --use_global_data ${use_global_data} --use_edges ${use_edges} --use_all ${use_all} --use_similarity ${use_similarity} --drop_blood_pools ${drop_bp} --reprocess_dataset ${reprocess_dataset} --load ${load}"
 
 

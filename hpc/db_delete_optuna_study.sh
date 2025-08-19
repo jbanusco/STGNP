@@ -25,28 +25,11 @@ delete_study() {
 
 # ==============================================================================
 
-# delete_study "Multiplex_CoupledPendulum"
-# delete_study "Multiplex_Lorenz"
-# delete_study "Multiplex_Kuramoto"
-# delete_study "Multiplex_HPT_ACDC"
-# delete_study "Multiplex_HPT_UKB"
-
-# delete_study "Multiplex_CoupledPendulum_Pred"
-# delete_study "Multiplex_Lorenz_Pred"
-# delete_study "Multiplex_Kuramoto_Pred"
-# delete_study "Multiplex_HPT_ACDC_Pred"
-# delete_study "Multiplex_HPT_UKB_Pred"
-
-# delete_study "Multiplex_CoupledPendulum_Pred_ADAM"
-# delete_study "Multiplex_Lorenz_Pred_ADAM"
-# delete_study "Multiplex_Kuramoto_Pred_ADAM"
-# delete_study "Multiplex_HPT_ACDC_Pred_ADAM"
-# delete_study "Multiplex_HPT_UKB_Pred_ADAM"
-
-delete_study "Multiplex_CoupledPendulum_ADAM"
-delete_study "Multiplex_Lorenz_ADAM"
-delete_study "Multiplex_Kuramoto_ADAM"
-# delete_study "Multiplex_HPT_ACDC_Pred_ADAM"
-# delete_study "Multiplex_HPT_UKB_Pred_ADAM"
+# For example
+delete_study "Multiplex_CoupledPendulum"
+delete_study "Multiplex_Lorenz"
+delete_study "Multiplex_Kuramoto"
+delete_study "Multiplex_HPT_ACDC"
+delete_study "Multiplex_HPT_UKB"
 
 echo "All studies processed successfully!"

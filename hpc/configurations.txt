@@ -1,0 +1,2 @@
+ZNorm,False,False,True,True
+ZNorm,True,False,True,True

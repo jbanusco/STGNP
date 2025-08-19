@@ -51,7 +51,6 @@ singularity exec --bind ${datapath}:/usr/data --bind ${code_path}:/usr/src ${sin
 EOL
 
     sbatch ${job_file}
-    # rm ${job_file}
     sleep 5  # Optional: Sleep for a second to avoid overwhelming the scheduler
     
 done
