@@ -109,8 +109,21 @@ To use the scripts of Optuna, fill the "dev.env.example" and rename it to "dev.e
 
 Experiments expect three input files:
 - **Nodes data**: e.g., regional volumes  
+
+Cycle', 'Region', 'Volume_Index', 'Subject',
+       'Region_ID', 'Cycle_ID', 'Label', 'Label_ID'  'Subject'
+
 - **Edges data**: e.g., Wasserstein distances  
+
+Index(['Source', 'Target', 'Cycle_1', 'Cycle_2', 'Edge_Type', 'CM_L2_Distance',
+       'Wasserstein_Distance', 'Subject', 'Cycle_1_ID', 'Cycle_2_ID',
+       'Target_ID', 'Source_ID', 'TargetLabel', 'SourceLabel',
+       'TargetLabel_ID', 'SourceLabel_ID'],
+      dtype='object', name='Metric')
+
 - **Global data**: e.g., BMI, demographics  
+
+ 'Subject', BMI, Age...
 
 ---
 
