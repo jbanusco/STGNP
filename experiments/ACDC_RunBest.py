@@ -25,8 +25,8 @@ matplotlib.use('Agg')
 def get_parser() -> argparse.ArgumentParser:
     data_path = "/media/jaume/DATA/Data/New_ACDC/MIDS/mixed/derivatives"
     experiment_name = 'GraphClassification'
-    # study_name = "Multiplex_HPT_ACDC_DIMENSIONS_SUM"
-    study_name = "Multiplex_HPT_ACDC_DIMENSIONS_ALL_SUM"
+    study_name = "Multiplex_HPT_ACDC_DIMENSIONS_SUM"
+    # study_name = "Multiplex_HPT_ACDC_DIMENSIONS_ALL_SUM"
 
     normalisation = 'ZNorm' # NoNorm, ZNorm, MaxMin, Spatial
     splits_file = os.path.join(data_path, experiment_name, 'nested_cv_indices.pkl')
@@ -39,7 +39,7 @@ def get_parser() -> argparse.ArgumentParser:
     parser.add_argument('--normalization', type=str, default=f'{normalisation}', help='Normalization strategy')  
     parser.add_argument('--use_global_data', type=str2bool, default=True, help='Use global data or not.')
     parser.add_argument('--use_edges', type=str2bool, default=True, help='Use edge information or not.')
-    parser.add_argument('--use_all', type=str2bool, default=True, help='Use all edges, or only AHA.')
+    parser.add_argument('--use_all', type=str2bool, default=False, help='Use all edges, or only AHA.')
     parser.add_argument('--use_similarity', type=str2bool, default=False, help='Use similarity instead of distance.')    
     parser.add_argument('--drop_blood_pools', type=str2bool, default=True, help='Drop the blood pools.')
     parser.add_argument('--reprocess_dataset', type=str2bool, default=False, help='Reprocess the dataset.')

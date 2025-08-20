@@ -35,8 +35,8 @@ def get_parser() -> argparse.ArgumentParser:
     # study_name = "Multiplex_HPT_UKB_DIMENSIONS_ALL"
     # study_name = "Multiplex_HPT_UKB_DIMENSIONS_SUM"
     # study_name = "Multiplex_HPT_UKB_DIMENSIONS_ALL_SUM"
-    # study_name = "Multiplex_HPT_UKB_DIMENSIONS_NEW_LOSS"
-    study_name = "Multiplex_HPT_UKB_DIMENSIONS_NEW_LOSS_ALL"
+    study_name = "Multiplex_HPT_UKB_DIMENSIONS_NEW_LOSS"
+    # study_name = "Multiplex_HPT_UKB_DIMENSIONS_NEW_LOSS_ALL"
 
     normalisation = 'ZNorm' # NoNorm, ZNorm, MaxMin, Spatial
     splits_file = os.path.join(data_path, experiment_name, 'nested_cv_indices.pkl')
@@ -264,6 +264,9 @@ if __name__ == "__main__":
     df_params.dropna(how='any', inplace=True)
     df_params = df_params.sort_values(by='value', ascending=False)
     best_params = get_best_params(df_params.iloc[0:5], use_median=True)
+    best_params['hidden_dim'] = 18
+    best_params['space_planes'] = 6
+    best_params['time_planes'] = 5
 
     model_params = objective_optuna.default_params.copy()
     model_params.update(best_params)

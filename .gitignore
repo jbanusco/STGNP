@@ -17,6 +17,9 @@ wandb/
 # Environment
 dev.env
 
+# Scripts
+release_weights.sh
+
 # Vscode
 .vscode
 .devcontainer
