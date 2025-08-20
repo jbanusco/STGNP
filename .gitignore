@@ -17,8 +17,9 @@ wandb/
 # Environment
 dev.env
 
-# Scripts
+# Scripts and folder for assets
 release_weights.sh
+release_assets_*
 
 # Vscode
 .vscode

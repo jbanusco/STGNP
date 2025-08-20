@@ -196,5 +196,18 @@ JSON configs are stored in the configs/ folder. On HPC use the scripts in the hp
 The project includes a Dockerfile. If you want to re-build the docker can use the script 'build_docker.sh' or 'build_docker_cpu.sh' for the CPU version, both changing the paths. 
 
 ---
+## Pretrained weights
+
+Download from the [Releases](https://github.com/jbanusco/STGNP/releases/v0.1.0).
+
+Direct links:
+- ACDC (Full): `stgnp_acdc_full.pt`
+- ACDC (Anat): `stgnp_acdc_anat.pt`
+- UKB (Full): `stgnp_ukb_full.pt`
+- UKB (Anat): `stgnp_ukb_anat.pt`
+- Synthetic: `stgnp_pendulum.pt`, `stgnp_lorenz.pt`, `stgnp_kuramoto.pt`
+
+
+---
 ## Citation
 If you use or refer to this work please cite [to add]
