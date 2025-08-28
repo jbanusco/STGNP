@@ -11,7 +11,7 @@ from dgl.data import DGLDataset
 from dgl import save_graphs, load_graphs
 from dgl.data.utils import save_info, load_info
 
-# from dataset.dataset_utils import load_dataset
+from dataset.dataset_utils import load_dataset
 
 
 class GraphDataset(DGLDataset):

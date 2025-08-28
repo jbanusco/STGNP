@@ -107,23 +107,73 @@ To use the scripts of Optuna, fill the "dev.env.example" and rename it to "dev.e
 
 ## Data Structure
 
-Experiments expect three input files:
-- **Nodes data**: e.g., regional volumes  
+Our datasets are organized as **heterogeneous graphs** built with [DGL](https://www.dgl.ai/). Each graph represents one subject (real cardiac data) or one simulation (synthetic data).
 
-Cycle', 'Region', 'Volume_Index', 'Subject',
-       'Region_ID', 'Cycle_ID', 'Label', 'Label_ID'  'Subject'
+### Graph Topology
+- **Node type:**  
+  `region` (anatomical or synthetic region of interest)
 
-- **Edges data**: e.g., Wasserstein distances  
+- **Edge types:**  
+  - `('region', 'space', 'region')`: **spatial edges** (undirected, stored bidirectionally). Defined either by AHA anatomical adjacency or as fully connected.  
+  - `('region', 'time', 'region')`: **temporal edges** (directed). Typically identity connections across consecutive frames.
 
-Index(['Source', 'Target', 'Cycle_1', 'Cycle_2', 'Edge_Type', 'CM_L2_Distance',
-       'Wasserstein_Distance', 'Subject', 'Cycle_1_ID', 'Cycle_2_ID',
-       'Target_ID', 'Source_ID', 'TargetLabel', 'SourceLabel',
-       'TargetLabel_ID', 'SourceLabel_ID'],
-      dtype='object', name='Metric')
+The adjacency matrices used to construct the graph determine the number of spatial/temporal edges. Temporal adjacency is usually the identity (each region links to itself in the next frame).
 
-- **Global data**: e.g., BMI, demographics  
+---
 
- 'Subject', BMI, Age...
+### Node Data
+Let:
+- **N** = number of regions (after dropping apex/blood pools if configured)  
+- **T** = number of frames  
+- **Fn** = number of node features  
+- **R** = number of unique regions (for one-hot encoding)
+
+Stored as pickled dictionaries per subject:
+- **`nfeatures`**: `FloatTensor [N, Fn, T]`  
+  Core node features (intensity, thickness, Jacobian, etc.)  
+- **`pos`**: `FloatTensor [N, 3, T]`  
+  3D center of mass (CM_X, CM_Y, CM_Z)  
+- **`time`**: `FloatTensor [N, 1, T]`  
+  Fraction of cardiac cycle (or normalized simulation time)  
+- **`region_id`**: `FloatTensor [N, R, T]`  
+  One-hot region encoding  
+
+Each tensor is aligned in **region × feature × time** order.  
+We also store metadata arrays:  
+- `ft_names`, `pos_names`, `time_names`, `region_names`
+
+---
+
+### Edge Data
+Let:
+- **Fe** = number of edge features (typically 2: Wasserstein distance, CM L2 distance)  
+- **E_space** = number of spatial edges  
+- **E_time** = number of temporal edges  
+
+Stored as pickled dictionaries:
+- **`space`**: `FloatTensor [E_space, Fe, T]`  
+- **`time`**: `FloatTensor [E_time, Fe, T]`  
+- **`names`**: list of edge feature names, e.g. `['Wasserstein_Distance', 'CM_L2_Distance']` or their similarity variants.  
+
+The dataloader enforces **consistent edge ordering** across frames using a fixed reference edge list (`u,v`) captured at graph construction.
+
+---
+
+### Global Data
+One row per subject storing **subject-level metadata**:
+- Anthropometrics: `Height`, `Weight`, `BMI`, `BSA`  
+- Demographics / group label if available  
+- Derived functional metrics (stroke volume, ejection fraction, etc.)  
+- Acquisition timing: frame indices for ED/ES, cycle duration `dt`, etc.
+
+---
+
+This structure ensures:  
+- Nodes capture **regional features evolving over time**.  
+- Edges capture **pairwise spatial/temporal relations**.  
+- Global data provides **subject-level covariates**.  
+
+Together, these form the **multiplex spatio-temporal graph** that is passed to our models.
 
 ---
 
