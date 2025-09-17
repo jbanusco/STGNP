@@ -2,6 +2,21 @@
 
 Official repository for the paper: **Spatiotemporal graph neural process for reconstruction, extrapolation, and classification of cardiac trajectories**
 
+This work is currently under review. You can find a preprint here: [https://arxiv.org/abs/2509.12953](https://arxiv.org/abs/2509.12953)
+
+If you use or refer to this work, please cite:
+
+```bibtex
+@article{BanusEtAl2025_SpatioTemporalGNP,
+  title        = {Spatiotemporal graph neural process for reconstruction, extrapolation, and classification of cardiac trajectories},
+  author       = {Jaume Banus and Augustin C. Ogier and Roger Hullin and Philippe Meyer and Ruud B. van Heeswijk and Jonas Richiardi},
+  journal      = {arXiv preprint},
+  volume       = {arXiv:2509.12953},
+  year         = {2025},
+  url          = {https://arxiv.org/abs/2509.12953}
+}
+```
+
 In this work we use spatiotemporal multiplex GNNs + Neural ODEs for cardiac trajectory modeling (reconstruction, extrapolation, and classification). The repository includes model code, training pipelines, Optuna hyperparameter tuning, and synthetic/cardiac experiments.
 
 <p align="center">
