@@ -1,0 +1,6 @@
+# minimal direct deps only
+numpy>=1.26,<2.1
+pandas>=2.2,<2.3
+torch>=2.1,<2.2
+pmdarima>=2.0,<2.1
+joblib>=1.5,<2
